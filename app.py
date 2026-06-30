@@ -120,6 +120,10 @@ def start_full_scan():
 
 # --- 监控事件处理 ---
 watchdog_enabled = False
+last_access_time = {}
+MIN_ACCESS_INTERVAL = 30  
+
+pending_files = {}
 
 def handle_file_change(file_path):
     try:
@@ -129,17 +133,36 @@ def handle_file_change(file_path):
     except Exception as ex:
         add_log(f"❌ 监控处理失败: {str(ex)}")
 
+def process_pending_files():
+    global pending_files
+    current_time = time.time()
+    files_to_process = []
+    
+    for file_path, added_time in list(pending_files.items()):
+        if current_time - added_time >= 2:  
+            files_to_process.append(file_path)
+            del pending_files[file_path]
+    
+    for file_path in files_to_process:
+        try:
+            if os.path.isfile(file_path):
+                execute_clean(file_path)
+                add_log(f"🔍 监控检测: 处理文件 {file_path}")
+        except Exception as ex:
+            add_log(f"❌ 监控处理失败: {str(ex)}")
+
 def watchdog_worker():
-    global watchdog_enabled
+    global watchdog_enabled, last_access_time, pending_files
     watchdog_enabled = True
-    add_log("🚀 监控服务已启动 (watchfiles)")
+    add_log("🚀 监控服务已启动 (watchfiles - 云盘安全模式)")
+    add_log(f"ℹ️ 访问间隔限制: {MIN_ACCESS_INTERVAL}秒")
     
     while watchdog_enabled:
         try:
             d = load_json(CONFIG_PATH, DEFAULT_CONFIG)
             if d['cfg'].get('watch_enabled') != 'on':
                 add_log("🔕 监控已禁用，等待启用...")
-                time.sleep(5)
+                time.sleep(10)
                 continue
             
             paths_to_watch = []
@@ -150,29 +173,43 @@ def watchdog_worker():
             
             if not paths_to_watch:
                 add_log("⚠️ 没有可监控的目录，等待配置...")
-                time.sleep(5)
+                time.sleep(10)
                 continue
             
-            add_log(f"🔔 监控已启用，正在监控 {len(paths_to_watch)} 个目录")
+            add_log(f"🔔 监控已启用，正在监控 {len(paths_to_watch)} 个目录 (云盘安全模式)")
             
             try:
-                for changes in watch(*paths_to_watch, poll_delay_ms=1000):
+                for changes in watch(*paths_to_watch, poll_delay_ms=5000):
                     if not watchdog_enabled:
                         break
                     d = load_json(CONFIG_PATH, DEFAULT_CONFIG)
                     if d['cfg'].get('watch_enabled') != 'on':
                         break
                     
+                    process_pending_files()
+                    
                     for change, path in changes:
                         if change in (Change.added, Change.modified):
-                            handle_file_change(path)
+                            dir_path = os.path.dirname(path)
+                            current_time = time.time()
+                            
+                            if dir_path in last_access_time:
+                                if current_time - last_access_time[dir_path] < MIN_ACCESS_INTERVAL:
+                                    add_log(f"⏳ 节流: {dir_path} 访问过于频繁，跳过")
+                                    continue
+                            
+                            last_access_time[dir_path] = current_time
+                            pending_files[path] = current_time
+                            
+                    time.sleep(1)
+                    
             except Exception as ex:
                 add_log(f"⚠️ 监控循环异常: {str(ex)}")
-                time.sleep(5)
+                time.sleep(10)
                 
         except Exception as ex:
             add_log(f"❌ 监控服务异常: {str(ex)}")
-            time.sleep(5)
+            time.sleep(10)
     
     add_log("🛑 监控服务已停止")
 
