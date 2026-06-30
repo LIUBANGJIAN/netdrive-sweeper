@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  netdrive-sweeper:
+    build: .
+    image: liubangjian/netdrive-sweeper:latest
+    container_name: netdrive-sweeper
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./data:/app/data
+      - /path/to/your/cloudnas:/CloudNAS
+    environment:
+      - BASE_PATH=/CloudNAS
+      - CONFIG_PATH=/app/data/config.json
+      - CACHE_PATH=/app/data/cache.json
+      - LOG_PATH=/app/data/clean.log
+    restart: unless-stopped
