@@ -299,6 +299,39 @@ def get_all_data():
 def manual_clean():
     threading.Thread(target=start_full_scan, daemon=True).start(); return jsonify({"success": True})
 
+@app.route('/api/force_scan')
+def force_scan():
+    threading.Thread(target=force_full_scan, daemon=True).start(); return jsonify({"success": True})
+
+def force_full_scan():
+    global file_fingerprints
+    conf = load_json(CONFIG_PATH, DEFAULT_CONFIG)
+    add_log("🔄 启动强制全量扫描...")
+    count = 0
+    
+    for t in conf.get('tasks', []):
+        target = os.path.join(BASE_PATH, t['path'].strip('/'))
+        if not os.path.exists(target):
+            add_log(f"❌ 路径不存在: {target}")
+            continue
+        for root, _, files in os.walk(target):
+            try:
+                for f in files:
+                    file_path = os.path.join(root, f)
+                    execute_clean(file_path)
+                    count += 1
+                    if file_path in file_fingerprints:
+                        del file_fingerprints[file_path]
+            except: continue
+    
+    cache = load_json(CACHE_PATH, {})
+    for key in list(cache.keys()):
+        if os.path.isfile(key):
+            del cache[key]
+    save_json(CACHE_PATH, cache)
+    
+    add_log(f"✅ 强制扫描完成: 处理文件 {count}")
+
 @app.route('/api/clear_cache')
 def clear_cache():
     save_json(CACHE_PATH, {}); return jsonify({"success": True})
@@ -357,7 +390,12 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:12px 8px
 <div><h2>🚀 智能清理 (同步指纹版)</h2>
 <span class="tag" style="background:#67C23A" id="statusWatch">监控: --</span>
 <span class="tag" style="background:#409EFF">索引: <b id="cacheCount">0</b></span>
-</div><button class="btn" style="background:#E6A23C" onclick="doClean()">🧹 立即全量扫描</button></div></div>
+</div>
+<div style="display:flex;gap:10px">
+<button class="btn" style="background:#E6A23C" onclick="doClean()">🧹 增量扫描</button>
+<button class="btn" style="background:#F56C6C" onclick="doForceScan()">🔄 强制扫描</button>
+</div>
+</div></div>
 
 <form action="/api/save_cfg" method="POST"><div class="grid"><div class="card"><h4>🛠️ 清理规则</h4>
 广告后缀: <input type="text" name="ad_exts" value="{{conf.cfg.ad_exts}}">
@@ -436,7 +474,8 @@ function addTask(){
     const f = new FormData(); f.append('path', p);
     fetch('/api/add_task', {method:'POST', body:f}).then(()=>refreshData());
 }
-function doClean(){fetch('/api/manual_clean'); alert("全量扫描已开始");}
+function doClean(){fetch('/api/manual_clean'); alert("增量扫描已开始");}
+function doForceScan(){if(confirm("确定要执行强制全量扫描吗？这将重新检查所有文件。")){fetch('/api/force_scan'); alert("强制扫描已开始");}}
 function clearCache(){if(confirm("确定要清空缓存吗？")){fetch('/api/clear_cache').then(()=>refreshData());}}
 function clearLog(){if(confirm("确定要清空日志吗？")){fetch('/api/clear_log').then(()=>refreshData());}}
 let curPath=""; function showP(){document.getElementById('picker').style.display='block';loadDir("");}
