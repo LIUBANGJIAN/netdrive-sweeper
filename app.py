@@ -123,8 +123,10 @@ watchdog_enabled = False
 file_fingerprints = {}
 dir_fingerprints = {}
 dir_access_time = {}
+pending_files = {}
 MIN_ACCESS_INTERVAL = 60  
 FILE_COOLDOWN_SECONDS = 5  
+LAST_NOTIFY_TIME = {}  
 
 def get_file_fingerprint(file_path):
     try:
@@ -171,7 +173,6 @@ def handle_file_event(file_path):
             return
         
         if file_path in file_fingerprints and file_fingerprints[file_path] == fingerprint:
-            add_log(f"⏭️ 文件未变化: {os.path.basename(file_path)}")
             return
         
         current_time = time.time()
@@ -179,13 +180,17 @@ def handle_file_event(file_path):
         try:
             file_mtime = os.path.getmtime(file_path)
             if current_time - file_mtime < FILE_COOLDOWN_SECONDS:
-                add_log(f"⏳ 文件冷却中: {os.path.basename(file_path)} ({int(FILE_COOLDOWN_SECONDS - (current_time - file_mtime))}秒后处理)")
+                pending_files[file_path] = current_time
                 return
         except:
             pass
         
         if not is_file_stable(file_path):
-            add_log(f"⏳ 文件正在写入: {os.path.basename(file_path)}")
+            pending_files[file_path] = current_time
+            last_notify = LAST_NOTIFY_TIME.get(file_path, 0)
+            if current_time - last_notify > 60:
+                add_log(f"⏳ 文件正在下载: {os.path.basename(file_path)}")
+                LAST_NOTIFY_TIME[file_path] = current_time
             return
         
         parent_dirs = get_all_parent_dirs(file_path)
@@ -217,6 +222,52 @@ def handle_file_event(file_path):
     except Exception as ex:
         add_log(f"❌ 处理文件失败: {file_path}, {str(ex)}")
 
+def pending_files_checker():
+    global pending_files
+    while watchdog_enabled:
+        try:
+            current_time = time.time()
+            files_to_process = []
+            
+            for file_path, added_time in list(pending_files.items()):
+                if current_time - added_time >= 10:
+                    if os.path.isfile(file_path):
+                        if is_file_stable(file_path):
+                            files_to_process.append(file_path)
+            
+            for file_path in files_to_process:
+                if file_path in pending_files:
+                    del pending_files[file_path]
+                add_log(f"🔍 检查待处理文件: {os.path.basename(file_path)}")
+                handle_file_event_direct(file_path)
+                
+            time.sleep(5)
+        except Exception as ex:
+            add_log(f"❌ 待处理文件检查异常: {str(ex)}")
+            time.sleep(5)
+
+def handle_file_event_direct(file_path):
+    try:
+        if not os.path.isfile(file_path):
+            return
+        
+        fingerprint = get_file_fingerprint(file_path)
+        if not fingerprint:
+            return
+        
+        add_log(f"🔍 处理文件: {file_path}")
+        execute_clean(file_path)
+        
+        file_fingerprints[file_path] = fingerprint
+        dir_access_time[os.path.dirname(file_path)] = time.time()
+        
+        cache = load_json(CACHE_PATH, {})
+        cache[file_path] = fingerprint
+        save_json(CACHE_PATH, cache)
+        
+    except Exception as ex:
+        add_log(f"❌ 处理文件失败: {file_path}, {str(ex)}")
+
 def watchdog_worker():
     global watchdog_enabled, file_fingerprints, dir_fingerprints
     watchdog_enabled = True
@@ -228,6 +279,9 @@ def watchdog_worker():
         if os.path.isfile(key):
             file_fingerprints[key] = cache[key]
     add_log(f"ℹ️ 已加载 {len(file_fingerprints)} 个文件指纹")
+    
+    threading.Thread(target=pending_files_checker, daemon=True).start()
+    add_log("🔄 待处理文件检查器已启动")
     
     while watchdog_enabled:
         try:
