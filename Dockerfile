@@ -8,11 +8,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt && \
     rm -rf /root/.cache && \
     find /usr/local/lib/python3.10 -type f -name "*.pyc" -delete && \
-    find /usr/local/lib/python3.10 -type d -name "__pycache__" -delete && \
-    find /usr/local/lib/python3.10/site-packages -type f -name "*.pyc" -delete && \
-    find /usr/local/lib/python3.10/site-packages -type d -name "__pycache__" -delete && \
-    rm -rf /usr/local/lib/python3.10/site-packages/*.dist-info && \
-    rm -rf /usr/local/lib/python3.10/site-packages/*/*.dist-info
+    find /usr/local/lib/python3.10 -type d -name "__pycache__" -delete
 
 FROM python:3.10-alpine3.18
 
