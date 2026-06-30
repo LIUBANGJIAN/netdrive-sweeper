@@ -124,7 +124,7 @@ file_fingerprints = {}
 dir_fingerprints = {}
 dir_access_time = {}
 MIN_ACCESS_INTERVAL = 60  
-FILE_COOLDOWN_SECONDS = 300  
+FILE_COOLDOWN_SECONDS = 5  
 
 def get_file_fingerprint(file_path):
     try:
