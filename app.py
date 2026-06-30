@@ -261,6 +261,43 @@ def watchdog_worker():
     
     add_log("🛑 监控服务已停止")
 
+# --- CD2 Webhook 处理 ---
+def handle_cd2_webhook(data):
+    try:
+        event_category = data.get('event_category')
+        
+        if event_category == 'file':
+            for item in data.get('data', []):
+                action = item.get('action')
+                is_dir = item.get('is_dir')
+                source_file = item.get('source_file')
+                
+                if not is_dir and action in ('create', 'rename'):
+                    if source_file and source_file.startswith('/'):
+                        source_file = source_file[1:]
+                    
+                    file_path = os.path.join(BASE_PATH, source_file)
+                    
+                    if os.path.isfile(file_path):
+                        add_log(f"📥 CD2 Webhook: {action} {file_path}")
+                        handle_file_event(file_path)
+        
+        elif event_category == 'mount_point':
+            for item in data.get('data', []):
+                action = item.get('action')
+                mount_point = item.get('mount_point')
+                status = item.get('status')
+                
+                if action == 'mount' and status:
+                    add_log(f"📥 CD2 Webhook: 挂载成功 {mount_point}")
+                elif action == 'unmount':
+                    add_log(f"📥 CD2 Webhook: 卸载 {mount_point}")
+        
+        return True
+    except Exception as ex:
+        add_log(f"❌ CD2 Webhook处理失败: {str(ex)}")
+        return False
+
 # --- Flask 路由 (保持不变) ---
 @app.route('/')
 def index():
@@ -298,6 +335,28 @@ def get_all_data():
 @app.route('/api/manual_clean')
 def manual_clean():
     threading.Thread(target=start_full_scan, daemon=True).start(); return jsonify({"success": True})
+
+@app.route('/file_notify', methods=['POST'])
+def file_notify():
+    try:
+        data = request.get_json()
+        add_log(f"📥 收到CD2文件通知: {data}")
+        handle_cd2_webhook(data)
+        return jsonify({"status": "success"})
+    except Exception as ex:
+        add_log(f"❌ CD2文件通知处理失败: {str(ex)}")
+        return jsonify({"status": "error", "message": str(ex)}), 500
+
+@app.route('/mount_notify', methods=['POST'])
+def mount_notify():
+    try:
+        data = request.get_json()
+        add_log(f"📥 收到CD2挂载通知: {data}")
+        handle_cd2_webhook(data)
+        return jsonify({"status": "success"})
+    except Exception as ex:
+        add_log(f"❌ CD2挂载通知处理失败: {str(ex)}")
+        return jsonify({"status": "error", "message": str(ex)}), 500
 
 @app.route('/api/force_scan')
 def force_scan():
