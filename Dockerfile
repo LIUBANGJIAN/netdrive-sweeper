@@ -1,13 +1,22 @@
-FROM python:3.10-slim
+FROM python:3.10-alpine AS builder
 
 WORKDIR /app
 
 COPY requirements.txt .
+
 RUN pip install --no-cache-dir -r requirements.txt
+
+FROM python:3.10-alpine
+
+WORKDIR /app
+
+COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
 
 COPY app.py .
 
-RUN mkdir -p /app/data /CloudNAS
+RUN mkdir -p /app/data /CloudNAS && \
+    rm -rf /var/cache/apk/*
 
 VOLUME ["/app/data", "/CloudNAS"]
 
