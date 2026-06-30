@@ -187,6 +187,15 @@ def manual_clean():
 def clear_cache():
     save_json(CACHE_PATH, {}); return jsonify({"success": True})
 
+@app.route('/api/clear_log')
+def clear_log():
+    try:
+        with open(LOG_PATH, 'w', encoding='utf-8') as f:
+            f.write('')
+        return jsonify({"success": True})
+    except:
+        return jsonify({"success": False})
+
 @app.route('/api/list_dir')
 def list_dir():
     p = request.args.get('path', '').strip('/')
@@ -254,13 +263,21 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:12px 8px
 <div class="content"><div style="padding: 15px 0;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px">
         <input type="text" id="cacheSearch" placeholder="搜索缓存目录..." style="width:200px; margin:0" oninput="resetPage()">
-        <div id="pagination"></div>
+        <div style="display:flex; gap:10px">
+            <button class="btn" style="background:#F56C6C; padding:5px 12px; font-size:12px" onclick="clearCache()">🗑️ 清空缓存</button>
+            <div id="pagination"></div>
+        </div>
     </div>
     <table id="cacheTable"><thead><tr><th>扫描路径</th><th>文件数</th><th>快照时间</th></tr></thead><tbody id="cacheBody"></tbody></table>
 </div></div>
 
 <button type="button" class="collapsible">📜 运行日志</button>
-<div class="content"><div style="padding: 15px 0;"><div id="logBox" class="log-area">同步中...</div></div></div>
+<div class="content"><div style="padding: 15px 0;">
+    <div style="display:flex; justify-content:flex-end; margin-bottom:10px">
+        <button class="btn" style="background:#F56C6C; padding:5px 12px; font-size:12px" onclick="clearLog()">🗑️ 清空日志</button>
+    </div>
+    <div id="logBox" class="log-area">同步中...</div>
+</div></div>
 
 <div id="picker"><h4 id="ch">/CloudNAS</h4><div id="ls" style="height:280px;overflow:auto;border:1px solid #eee;margin-bottom:15px"></div>
 <div style="display:flex; justify-content:flex-end; gap:10px"><button class="btn" style="background:#909399" onclick="hideP()">取消</button><button class="btn" onclick="confirmP()">选择</button></div></div>
@@ -304,6 +321,8 @@ function addTask(){
     fetch('/api/add_task', {method:'POST', body:f}).then(()=>refreshData());
 }
 function doClean(){fetch('/api/manual_clean'); alert("全量扫描已开始");}
+function clearCache(){if(confirm("确定要清空缓存吗？")){fetch('/api/clear_cache').then(()=>refreshData());}}
+function clearLog(){if(confirm("确定要清空日志吗？")){fetch('/api/clear_log').then(()=>refreshData());}}
 let curPath=""; function showP(){document.getElementById('picker').style.display='block';loadDir("");}
 function hideP(){document.getElementById('picker').style.display='none';}
 function loadDir(p){curPath=p;document.getElementById('ch').innerText="/CloudNAS/"+p;fetch('/api/list_dir?path='+encodeURIComponent(p)).then(r=>r.json()).then(data=>{
