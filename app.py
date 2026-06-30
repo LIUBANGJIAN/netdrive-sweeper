@@ -121,6 +121,7 @@ def start_full_scan():
 # --- 监控事件处理 ---
 watchdog_enabled = False
 file_fingerprints = {}
+dir_fingerprints = {}
 dir_access_time = {}
 MIN_ACCESS_INTERVAL = 60  
 
@@ -132,6 +133,23 @@ def get_file_fingerprint(file_path):
         return None
     except:
         return None
+
+def get_dir_fingerprint(dir_path):
+    try:
+        if os.path.isdir(dir_path):
+            stat = os.stat(dir_path)
+            return f"{stat.st_mtime}_{stat.st_size}"
+        return None
+    except:
+        return None
+
+def get_all_parent_dirs(file_path):
+    dirs = []
+    current = os.path.dirname(file_path)
+    while current != '/' and current != '' and current != BASE_PATH.rstrip('/'):
+        dirs.append(current)
+        current = os.path.dirname(current)
+    return dirs
 
 def handle_file_event(file_path):
     try:
@@ -146,19 +164,29 @@ def handle_file_event(file_path):
             add_log(f"⏭️ 文件未变化: {os.path.basename(file_path)}")
             return
         
-        dir_path = os.path.dirname(file_path)
         current_time = time.time()
         
-        if dir_path in dir_access_time:
-            if current_time - dir_access_time[dir_path] < MIN_ACCESS_INTERVAL:
-                add_log(f"⏳ 节流: {dir_path} 访问过于频繁")
+        parent_dirs = get_all_parent_dirs(file_path)
+        for dir_path in parent_dirs:
+            if dir_path in dir_access_time:
+                if current_time - dir_access_time[dir_path] < MIN_ACCESS_INTERVAL:
+                    add_log(f"⏳ 节流: 父目录 {dir_path} 访问过于频繁")
+                    return
+        
+        file_dir = os.path.dirname(file_path)
+        if file_dir in dir_access_time:
+            if current_time - dir_access_time[file_dir] < MIN_ACCESS_INTERVAL:
+                add_log(f"⏳ 节流: {file_dir} 访问过于频繁")
                 return
         
         add_log(f"🔍 处理文件: {file_path}")
         execute_clean(file_path)
         
         file_fingerprints[file_path] = fingerprint
-        dir_access_time[dir_path] = current_time
+        dir_access_time[file_dir] = current_time
+        
+        for dir_path in parent_dirs:
+            dir_access_time[dir_path] = current_time
         
         cache = load_json(CACHE_PATH, {})
         cache[file_path] = fingerprint
@@ -168,9 +196,9 @@ def handle_file_event(file_path):
         add_log(f"❌ 处理文件失败: {file_path}, {str(ex)}")
 
 def watchdog_worker():
-    global watchdog_enabled, file_fingerprints
+    global watchdog_enabled, file_fingerprints, dir_fingerprints
     watchdog_enabled = True
-    add_log("🚀 监控服务已启动 (文件级安全模式)")
+    add_log("🚀 监控服务已启动 (多级目录时间模式)")
     add_log(f"ℹ️ 目录访问间隔: {MIN_ACCESS_INTERVAL}秒")
     
     cache = load_json(CACHE_PATH, {})
@@ -198,7 +226,7 @@ def watchdog_worker():
                 time.sleep(15)
                 continue
             
-            add_log(f"🔔 监控已启用，正在监控 {len(paths_to_watch)} 个目录 (文件级模式)")
+            add_log(f"🔔 监控已启用，正在监控 {len(paths_to_watch)} 个目录 (多级目录时间模式)")
             
             try:
                 for changes in watch(*paths_to_watch, poll_delay_ms=10000):
@@ -213,7 +241,13 @@ def watchdog_worker():
                             if os.path.isfile(path):
                                 handle_file_event(path)
                             elif os.path.isdir(path):
-                                add_log(f"📂 目录变化: {path}")
+                                dir_fingerprint = get_dir_fingerprint(path)
+                                old_fingerprint = dir_fingerprints.get(path)
+                                if dir_fingerprint and dir_fingerprint != old_fingerprint:
+                                    add_log(f"📂 目录时间变化: {path}")
+                                    dir_fingerprints[path] = dir_fingerprint
+                                elif dir_fingerprint:
+                                    add_log(f"⏭️ 目录时间未变化: {path}")
                     
                     time.sleep(3)
                     
