@@ -3,6 +3,12 @@ name: Docker Build and Push
 on:
   push:
     branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Reason for manual build'
+        required: false
+        default: 'Manual build triggered'
 
 jobs:
   build:
