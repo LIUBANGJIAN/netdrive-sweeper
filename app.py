@@ -124,6 +124,7 @@ file_fingerprints = {}
 dir_fingerprints = {}
 dir_access_time = {}
 MIN_ACCESS_INTERVAL = 60  
+FILE_COOLDOWN_SECONDS = 300  
 
 def get_file_fingerprint(file_path):
     try:
@@ -151,6 +152,15 @@ def get_all_parent_dirs(file_path):
         current = os.path.dirname(current)
     return dirs
 
+def is_file_stable(file_path, check_interval=1):
+    try:
+        size1 = os.path.getsize(file_path)
+        time.sleep(check_interval)
+        size2 = os.path.getsize(file_path)
+        return size1 == size2
+    except:
+        return False
+
 def handle_file_event(file_path):
     try:
         if not os.path.isfile(file_path):
@@ -165,6 +175,18 @@ def handle_file_event(file_path):
             return
         
         current_time = time.time()
+        
+        try:
+            file_mtime = os.path.getmtime(file_path)
+            if current_time - file_mtime < FILE_COOLDOWN_SECONDS:
+                add_log(f"⏳ 文件冷却中: {os.path.basename(file_path)} ({int(FILE_COOLDOWN_SECONDS - (current_time - file_mtime))}秒后处理)")
+                return
+        except:
+            pass
+        
+        if not is_file_stable(file_path):
+            add_log(f"⏳ 文件正在写入: {os.path.basename(file_path)}")
+            return
         
         parent_dirs = get_all_parent_dirs(file_path)
         for dir_path in parent_dirs:
