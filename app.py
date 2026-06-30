@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 import os, json, time, threading
 from flask import Flask, render_template_string, request, redirect, jsonify
-from watchdog.observers.polling import PollingObserver
-from watchdog.events import FileSystemEventHandler
+from watchfiles import watch, Change
 
 app = Flask(__name__)
 
@@ -120,69 +119,62 @@ def start_full_scan():
     add_log(f"✅ 扫描完成: 处理文件 {count}, 跳过未变动 {skip}")
 
 # --- 监控事件处理 ---
-class GlobalHandler(FileSystemEventHandler):
-    def on_created(self, e):
-        if not e.is_directory: 
-            try:
-                execute_clean(e.src_path)
-                add_log(f"🔍 监控检测: 新建文件 {e.src_path}")
-            except Exception as ex:
-                add_log(f"❌ 监控处理失败: {str(ex)}")
-    
-    def on_moved(self, e):
-        if not e.is_directory: 
-            try:
-                execute_clean(e.dest_path)
-                add_log(f"🔍 监控检测: 移动文件 {e.dest_path}")
-            except Exception as ex:
-                add_log(f"❌ 监控处理失败: {str(ex)}")
-
-    def on_modified(self, e):
-        if not e.is_directory: 
-            try:
-                execute_clean(e.src_path)
-                add_log(f"🔍 监控检测: 修改文件 {e.src_path}")
-            except Exception as ex:
-                add_log(f"❌ 监控处理失败: {str(ex)}")
-
 watchdog_enabled = False
-watchdog_thread = None
+
+def handle_file_change(file_path):
+    try:
+        if os.path.isfile(file_path):
+            execute_clean(file_path)
+            add_log(f"🔍 监控检测: 处理文件 {file_path}")
+    except Exception as ex:
+        add_log(f"❌ 监控处理失败: {str(ex)}")
 
 def watchdog_worker():
     global watchdog_enabled
-    obs = PollingObserver(timeout=5)
-    obs.start()
-    last_state = ""
     watchdog_enabled = True
-    add_log("🚀 监控服务已启动")
+    add_log("🚀 监控服务已启动 (watchfiles)")
     
-    try:
-        while watchdog_enabled:
+    while watchdog_enabled:
+        try:
+            d = load_json(CONFIG_PATH, DEFAULT_CONFIG)
+            if d['cfg'].get('watch_enabled') != 'on':
+                add_log("🔕 监控已禁用，等待启用...")
+                time.sleep(5)
+                continue
+            
+            paths_to_watch = []
+            for t in d.get('tasks', []):
+                target = os.path.join(BASE_PATH, t['path'].lstrip('/'))
+                if os.path.exists(target):
+                    paths_to_watch.append(target)
+            
+            if not paths_to_watch:
+                add_log("⚠️ 没有可监控的目录，等待配置...")
+                time.sleep(5)
+                continue
+            
+            add_log(f"🔔 监控已启用，正在监控 {len(paths_to_watch)} 个目录")
+            
             try:
-                d = load_json(CONFIG_PATH, DEFAULT_CONFIG)
-                tasks_hash = str(hash(str(d.get('tasks', []))))
-                curr_state = f"{d['cfg'].get('watch_enabled')}_{tasks_hash}"
-                
-                if curr_state != last_state:
-                    obs.unschedule_all()
-                    if d['cfg'].get('watch_enabled') == 'on':
-                        active_count = 0
-                        for t in d.get('tasks', []):
-                            target = os.path.join(BASE_PATH, t['path'].lstrip('/'))
-                            if os.path.exists(target):
-                                obs.schedule(GlobalHandler(), target, recursive=True)
-                                active_count += 1
-                        add_log(f"🔔 监控已启用，正在监控 {active_count} 个目录")
-                    else:
-                        add_log("🔕 监控已禁用")
-                    last_state = curr_state
+                for changes in watch(*paths_to_watch, poll_delay_ms=1000):
+                    if not watchdog_enabled:
+                        break
+                    d = load_json(CONFIG_PATH, DEFAULT_CONFIG)
+                    if d['cfg'].get('watch_enabled') != 'on':
+                        break
+                    
+                    for change, path in changes:
+                        if change in (Change.added, Change.modified):
+                            handle_file_change(path)
             except Exception as ex:
-                add_log(f"⚠️ 监控配置读取异常: {str(ex)}")
-            time.sleep(10)
-    finally:
-        obs.stop()
-        obs.join()
-        add_log("🛑 监控服务已停止")
+                add_log(f"⚠️ 监控循环异常: {str(ex)}")
+                time.sleep(5)
+                
+        except Exception as ex:
+            add_log(f"❌ 监控服务异常: {str(ex)}")
+            time.sleep(5)
+    
+    add_log("🛑 监控服务已停止")
 
 # --- Flask 路由 (保持不变) ---
 @app.route('/')
