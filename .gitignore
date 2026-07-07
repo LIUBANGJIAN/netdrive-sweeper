@@ -4,3 +4,4 @@ data/
 *.tmp
 *.exe
 .DS_Store
+tmp_*.json
