@@ -24,10 +24,10 @@ jobs:
             -t ${{ secrets.DOCKERHUB_USERNAME }}/netdrive-sweeper:latest \
             .
 
-      - name: Verify image startup
+      - name: Verify image contents
         run: |
-          docker run --rm ${{ secrets.DOCKERHUB_USERNAME }}/netdrive-sweeper:${{ github.sha }} \
-            /app/netdrive-sweeper -h >/dev/null 2>&1 || true
+          docker run --rm --entrypoint /bin/sh ${{ secrets.DOCKERHUB_USERNAME }}/netdrive-sweeper:${{ github.sha }} \
+            -c 'test -x /app/netdrive-sweeper && test -f /app/cd2.proto && echo "image contents ok"'
 
       - name: Push image
         run: |
