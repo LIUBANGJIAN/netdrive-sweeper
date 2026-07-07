@@ -1,0 +1,6 @@
+data/
+*.log
+*.token
+*.tmp
+*.exe
+.DS_Store

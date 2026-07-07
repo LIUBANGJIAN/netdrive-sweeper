@@ -1,0 +1,95 @@
+syntax = "proto3";
+
+package clouddrive;
+
+option go_package = "netdrive-sweeper/internal/cd2pb;cd2pb";
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+service CloudDriveFileSrv {
+  rpc GetSystemInfo(google.protobuf.Empty) returns (CloudDriveSystemInfo) {}
+  rpc GetApiTokenInfo(StringValue) returns (TokenInfo) {}
+  rpc GetSubFiles(ListSubFileRequest) returns (stream SubFilesReply) {}
+  rpc DeleteFile(FileRequest) returns (FileOperationResult) {}
+  rpc DeleteFilePermanently(FileRequest) returns (FileOperationResult) {}
+}
+
+message StringValue {
+  string value = 1;
+}
+
+message CloudDriveSystemInfo {
+  bool systemReady = 1;
+  string userName = 2;
+  string version = 3;
+}
+
+message ListSubFileRequest {
+  string path = 1;
+  bool forceRefresh = 2;
+  optional bool checkExpires = 3;
+}
+
+message SubFilesReply {
+  repeated CloudDriveFile subFiles = 1;
+}
+
+message FileRequest {
+  string path = 1;
+  optional bool forceRefresh = 2;
+}
+
+message FileOperationResult {
+  bool success = 1;
+  string errorMessage = 2;
+  repeated string resultFilePaths = 3;
+}
+
+message CloudDriveFile {
+  string id = 1;
+  string name = 2;
+  string fullPathName = 3;
+  int64 size = 4;
+  enum FileType {
+    Directory = 0;
+    File = 1;
+    Other = 2;
+  }
+  FileType fileType = 5;
+  google.protobuf.Timestamp createTime = 6;
+  google.protobuf.Timestamp writeTime = 7;
+  google.protobuf.Timestamp accessTime = 8;
+  bool isDirectory = 30;
+  bool isRoot = 31;
+  bool isCloudRoot = 32;
+  bool isCloudDirectory = 33;
+  bool isCloudFile = 34;
+  bool isForbidden = 36;
+  bool canDeletePermanently = 69;
+  bool readOnly = 80;
+}
+
+message TokenPermissions {
+  bool allow_list = 1;
+  bool allow_search = 2;
+  bool allow_create_folder = 4;
+  bool allow_create_file = 5;
+  bool allow_write = 6;
+  bool allow_read = 7;
+  bool allow_rename = 8;
+  bool allow_move = 9;
+  bool allow_copy = 10;
+  bool allow_delete = 11;
+  bool allow_delete_permanently = 12;
+}
+
+message TokenInfo {
+  string token = 1;
+  string rootDir = 2;
+  TokenPermissions permissions = 3;
+  optional uint64 expires_in = 4;
+  string friendly_name = 5;
+  bool enableGrpcLog = 6;
+  bool enableStreamFileLog = 7;
+}

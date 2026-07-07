@@ -1,0 +1,14 @@
+services:
+  netdrive-sweeper:
+    build: .
+    image: liubangjian/netdrive-sweeper:latest
+    container_name: netdrive-sweeper
+    network_mode: host
+    volumes:
+      - ./data:/app/data
+    environment:
+      - LISTEN=:5000
+      - CONFIG_PATH=/app/data/config.json
+      - CACHE_PATH=/app/data/cache.json
+      - LOG_PATH=/app/data/clean.log
+    restart: unless-stopped
