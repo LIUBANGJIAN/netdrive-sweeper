@@ -13,6 +13,34 @@ service CloudDriveFileSrv {
   rpc GetSubFiles(ListSubFileRequest) returns (stream SubFilesReply) {}
   rpc DeleteFile(FileRequest) returns (FileOperationResult) {}
   rpc DeleteFilePermanently(FileRequest) returns (FileOperationResult) {}
+  rpc ListOfflineFilesByPath(FileRequest) returns (OfflineFileListResult) {}
+  rpc ListAllOfflineFiles(OfflineFileListAllRequest) returns (OfflineFileListAllResult) {}
+}
+
+enum OfflineStatus {
+  OfflineUnknown = 0;
+  OfflineFinished = 1;
+  OfflineError = 2;
+  OfflineDownloading = 3;
+}
+
+message OfflineFile {
+}
+
+message OfflineFileListResult {
+  repeated OfflineFile offlineFiles = 1;
+  OfflineStatus status = 2;
+}
+
+message OfflineFileListAllRequest {
+  string cloudName = 1;
+  string cloudAccountId = 2;
+  uint32 page = 3;
+  optional string path = 4;
+}
+
+message OfflineFileListAllResult {
+  repeated OfflineFile offlineFiles = 1;
 }
 
 message StringValue {

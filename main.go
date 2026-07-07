@@ -49,6 +49,7 @@ type Config struct {
 	MaxDepth          int      `json:"max_depth"`
 	ForceRefresh      bool     `json:"force_refresh"`
 	DeletePermanently bool     `json:"delete_permanently"`
+	OfflineOnly       bool     `json:"offline_only"`
 	Tasks             []string `json:"tasks"`
 }
 
@@ -77,12 +78,21 @@ type FileItem struct {
 	CanDeletePermanently bool   `json:"canDeletePermanently"`
 }
 
+type OfflineTarget struct {
+	Path        string `json:"path"`
+	DisplayPath string `json:"displayPath"`
+	Status      string `json:"status"`
+	Ready       bool   `json:"ready"`
+	Note        string `json:"note,omitempty"`
+}
+
 type ScanResult struct {
-	Checked int        `json:"checked"`
-	Matched int        `json:"matched"`
-	Deleted int        `json:"deleted"`
-	Errors  []string   `json:"errors"`
-	Items   []FileItem `json:"items"`
+	Checked      int             `json:"checked"`
+	Matched      int             `json:"matched"`
+	Deleted      int             `json:"deleted"`
+	Errors       []string        `json:"errors"`
+	Items        []FileItem      `json:"items"`
+	OfflineTasks []OfflineTarget `json:"offlineTasks"`
 }
 
 var (
@@ -136,7 +146,10 @@ func mustLoadConfig() {
 	stateMu.Lock()
 	defer stateMu.Unlock()
 	if b, err := os.ReadFile(configPath); err == nil {
-		_ = json.Unmarshal(b, &cfg)
+		b = []byte(strings.TrimPrefix(string(b), "\ufeff"))
+		if err := json.Unmarshal(b, &cfg); err != nil {
+			appendLog("配置文件解析失败，使用默认配置: %v", err)
+		}
 	}
 	ensureDataDirs()
 }
@@ -370,6 +383,12 @@ func runScan(ctx context.Context, deleteMode bool) (*ScanResult, error) {
 	}
 	res := &ScanResult{}
 	for _, task := range cleanTasks(cfg.Tasks) {
+		target := client.OfflineTarget(ctx, token, task)
+		res.OfflineTasks = append(res.OfflineTasks, target)
+		if cfg.OfflineOnly && !target.Ready {
+			appendLog("跳过未完成离线目录 %s: %s", target.DisplayPath, target.Note)
+			continue
+		}
 		scanPath(ctx, client, token, cfg, task, 0, deleteMode, res)
 	}
 	appendLog("扫描完成 checked=%d matched=%d deleted=%d errors=%d", res.Checked, res.Matched, res.Deleted, len(res.Errors))
@@ -576,6 +595,44 @@ func (c *CD2Client) parseSubFiles(reply *dynamicpb.Message) []FileItem {
 		out = append(out, FileItem{Name: name, Path: normalizePath(path), Size: getInt64(m, fd.ByName("size")), IsDir: isDir, ReadOnly: getBool(m, fd.ByName("readOnly")), CanDeletePermanently: getBool(m, fd.ByName("canDeletePermanently"))})
 	}
 	return out
+}
+
+func (c *CD2Client) OfflineTarget(ctx context.Context, token *TokenInfo, path string) OfflineTarget {
+	path = normalizePath(path)
+	target := OfflineTarget{Path: path, DisplayPath: displayPath(token, path), Status: "unknown", Ready: true, Note: "未启用或无法读取离线状态时按目录扫描"}
+	msg := dynamicpb.NewMessage(c.resolver.mustMsg("FileRequest"))
+	fd := msg.Descriptor().Fields()
+	msg.Set(fd.ByName("path"), protoreflect.ValueOfString(path))
+	out := dynamicpb.NewMessage(c.resolver.mustMsg("OfflineFileListResult"))
+	ctx, cancel := context.WithTimeout(authCtx(ctx, c.cfg.Token), 20*time.Second)
+	defer cancel()
+	if err := c.conn.Invoke(ctx, "/clouddrive.CloudDriveFileSrv/ListOfflineFilesByPath", msg, out); err != nil {
+		target.Note = formatCD2Error(err).Error()
+		return target
+	}
+	statusField := out.Descriptor().Fields().ByName("status")
+	statusNum := out.Get(statusField).Enum()
+	target.Status = offlineStatusName(statusNum)
+	target.Ready = statusNum == 1 || statusNum == 0
+	if target.Ready {
+		target.Note = "离线任务已完成或该目录无进行中的离线任务"
+	} else {
+		target.Note = "离线任务尚未完成，暂不扫描该目录"
+	}
+	return target
+}
+
+func offlineStatusName(n protoreflect.EnumNumber) string {
+	switch n {
+	case 1:
+		return "finished"
+	case 2:
+		return "error"
+	case 3:
+		return "downloading"
+	default:
+		return "unknown"
+	}
 }
 
 func (c *CD2Client) Delete(ctx context.Context, path string, permanently bool) error {

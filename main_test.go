@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"google.golang.org/protobuf/reflect/protoreflect"
+)
 
 func TestNormalizeAddress(t *testing.T) {
 	cases := map[string]string{
@@ -35,5 +39,14 @@ func TestShouldClean(t *testing.T) {
 	}
 	if shouldClean(FileItem{Name: "movie.mp4", Size: 100 * 1024 * 1024}, cfg) {
 		t.Fatal("large video should not match")
+	}
+}
+
+func TestOfflineStatusName(t *testing.T) {
+	cases := map[protoreflect.EnumNumber]string{0: "unknown", 1: "finished", 2: "error", 3: "downloading", 99: "unknown"}
+	for in, want := range cases {
+		if got := offlineStatusName(in); got != want {
+			t.Fatalf("offlineStatusName(%d)=%q want %q", in, got, want)
+		}
 	}
 }
