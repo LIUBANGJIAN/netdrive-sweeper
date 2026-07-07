@@ -30,7 +30,7 @@ import (
 	"google.golang.org/protobuf/types/dynamicpb"
 )
 
-const appName = "NetDrive Sweeper Go"
+const appName = "NetDrive Sweeper"
 
 var (
 	configPath = getenv("CONFIG_PATH", "data/config.json")
@@ -102,7 +102,9 @@ var (
 )
 
 func main() {
-	mustLoadConfig()
+	if err := mustLoadConfig(); err != nil {
+		log.Printf("配置加载警告: %v，使用默认配置", err)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleIndex)
 	mux.HandleFunc("/api/state", handleState)
@@ -115,7 +117,7 @@ func main() {
 	mux.HandleFunc("/api/clear_logs", handleClearLogs)
 
 	addr := getenv("LISTEN", ":5000")
-	log.Printf("%s listening on %s", appName, addr)
+	log.Printf("%s 启动，监听 %s，配置文件: %s", appName, addr, configPath)
 	if err := http.ListenAndServe(addr, logRequest(mux)); err != nil {
 		log.Fatal(err)
 	}
@@ -142,20 +144,24 @@ func getenv(k, fallback string) string {
 	return fallback
 }
 
-func mustLoadConfig() {
+func mustLoadConfig() error {
 	stateMu.Lock()
 	defer stateMu.Unlock()
 	if b, err := os.ReadFile(configPath); err == nil {
 		b = []byte(strings.TrimPrefix(string(b), "\ufeff"))
 		if err := json.Unmarshal(b, &cfg); err != nil {
-			appendLog("配置文件解析失败，使用默认配置: %v", err)
+			return fmt.Errorf("配置文件解析失败: %w", err)
 		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("配置文件读取失败: %w", err)
 	}
-	ensureDataDirs()
+	return ensureDataDirs()
 }
 
 func saveConfigLocked() error {
-	ensureDataDirs()
+	if err := ensureDataDirs(); err != nil {
+		return err
+	}
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
@@ -163,12 +169,15 @@ func saveConfigLocked() error {
 	return os.WriteFile(configPath, b, 0600)
 }
 
-func ensureDataDirs() {
+func ensureDataDirs() error {
 	for _, p := range []string{configPath, cachePath, logPath} {
 		if dir := filepath.Dir(p); dir != "." && dir != "" {
-			_ = os.MkdirAll(dir, 0755)
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return fmt.Errorf("创建目录失败 %s: %w", dir, err)
+			}
 		}
 	}
+	return nil
 }
 
 func currentConfig() Config {
@@ -187,7 +196,10 @@ func setStatus(message string, token *TokenInfo) {
 }
 
 func appendLog(format string, args ...any) {
-	ensureDataDirs()
+	if err := ensureDataDirs(); err != nil {
+		log.Printf("日志目录创建失败: %v", err)
+		return
+	}
 	line := time.Now().Format("2006-01-02 15:04:05") + " " + fmt.Sprintf(format, args...) + "\n"
 	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err == nil {
@@ -244,7 +256,7 @@ func handleState(w http.ResponseWriter, r *http.Request) {
 func handleSave(w http.ResponseWriter, r *http.Request) {
 	var next Config
 	if err := json.NewDecoder(r.Body).Decode(&next); err != nil {
-		writeError(w, err)
+		writeError(w, fmt.Errorf("配置解析失败: %w", err))
 		return
 	}
 	next.Address = normalizeAddress(next.Address)
@@ -257,10 +269,10 @@ func handleSave(w http.ResponseWriter, r *http.Request) {
 	err := saveConfigLocked()
 	stateMu.Unlock()
 	if err != nil {
-		writeError(w, err)
+		writeError(w, fmt.Errorf("配置保存失败: %w", err))
 		return
 	}
-	writeJSON(w, map[string]any{"ok": true})
+	writeJSON(w, map[string]any{"ok": true, "config": cfg})
 }
 
 func handleTest(w http.ResponseWriter, r *http.Request) {
