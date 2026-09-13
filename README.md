@@ -62,7 +62,7 @@
    - `allow_delete`（删除到回收站）— 需要清理时必需
    - `allow_delete_permanently`（永久删除）— 仅在开启永久删除时需要
    - `allow_push_message`（推送订阅）— 需要事件驱动实时清理时必需
-4. 运行环境能访问 CD2 的 gRPC 端口（Docker 建议 `network_mode: host`，或用宿主机内网 IP）。
+4. 运行环境能访问 CD2 的 gRPC 端口。注意：随附的 `docker-compose.yml` 默认使用**桥接网络**，容器内的 `127.0.0.1` 指向容器自身，因此 CD2 地址需填**宿主机内网 IP**（如 `192.168.1.10:19798`）或 `host.docker.internal:19798`；若 CD2 与容器同机、想直接用 `127.0.0.1:19798`，可改用 `network_mode: host`。
 
 ---
 
@@ -73,11 +73,18 @@
 ```yaml
 services:
   netdrive-sweeper:
+    build: .
     image: liubangjian/netdrive-sweeper:latest
     container_name: netdrive-sweeper
-    network_mode: host          # CD2 监听 127.0.0.1 时必需
+    # 桥接网络：容器内的 127.0.0.1 指向容器自身，无法访问宿主机的 CD2。
+    # 因此需在 Web 页面把 CD2 地址填成宿主机内网 IP（如 192.168.1.10:19798），
+    # 或使用 host.docker.internal:19798（下方 extra_hosts 已做 host-gateway 映射）。
+    ports:
+      - "5000:5000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
-      - ./data:/app/data        # 配置 / 记录 / 日志持久化
+      - ./data:/app/data
     environment:
       - LISTEN=:5000
       - CONFIG_PATH=/app/data/config.json
@@ -90,7 +97,7 @@ services:
 docker compose up -d
 ```
 
-> 若使用 bridge 网络，把 `network_mode: host` 换成 `ports: ["5000:5000"]`，并在页面里把 CD2 地址填成宿主机内网 IP（如 `192.168.1.10:19798`）。
+> 默认即桥接（bridge）模式，因此**必须**在 Web 页面把 CD2 地址填成宿主机内网 IP（如 `192.168.1.10:19798`）或 `host.docker.internal:19798`（上方 `extra_hosts` 已做 `host-gateway` 映射）。若你希望容器直接用 `127.0.0.1:19798` 访问同机的 CD2，可改回 `network_mode: host`（此时需移除 `ports`，Web 端口即宿主机 5000）。
 
 ### 5.2 docker run
 
@@ -170,7 +177,7 @@ go build -o netdrive-sweeper .
 
 | 现象 | 原因 / 处理 |
 | --- | --- |
-| 「CD2 不可达」 | CD2 未启动 / gRPC 未开启 / 容器未用 host 网络 / 端口不是 19798 |
+| 「CD2 不可达」 | CD2 未启动 / gRPC 未开启 / 端口不是 19798；**桥接模式下地址填了 `127.0.0.1` 也会不可达**，需改填宿主机内网 IP 或 `host.docker.internal:19798` |
 | 「Token 无效或过期」 | Token 复制不完整，或已在 CD2 侧失效 |
 | 「Token 权限不足」 | 缺 `allow_list` / `allow_delete` / `allow_push_message`，回到 CD2 重新勾选 |
 | 勾选了清理但没删掉 | 删除总开关 `allow_delete` 未开，或文件在冷却期，或目录含未完成后缀 |

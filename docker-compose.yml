@@ -3,7 +3,13 @@ services:
     build: .
     image: liubangjian/netdrive-sweeper:latest
     container_name: netdrive-sweeper
-    network_mode: host
+    # 桥接网络：容器内的 127.0.0.1 指向容器自身，无法访问宿主机的 CD2。
+    # 因此需在 Web 页面把 CD2 地址填成宿主机内网 IP（如 192.168.1.10:19798），
+    # 或使用 host.docker.internal:19798（下方 extra_hosts 已做 host-gateway 映射）。
+    ports:
+      - "5000:5000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./data:/app/data
     environment:
