@@ -235,3 +235,17 @@ func TestNormalizeConfig_BackfillsIncompleteSuffixes(t *testing.T) {
 		t.Fatalf("explicit value must be preserved, got %q", custom.IncompleteSuffixes)
 	}
 }
+
+// TestNormalizeConfig_MaxDepth 证明 max_depth 防呆方向正确：
+// 0 表示"不限递归深度"，必须原样保留；负数归 0；过大值归 100（绝不回退成 0）。
+func TestNormalizeConfig_MaxDepth(t *testing.T) {
+	for _, c := range []struct {
+		in, want int
+	}{
+		{-5, 0}, {0, 0}, {1, 1}, {50, 50}, {100, 100}, {1000, 100},
+	} {
+		if got := normalizeConfig(Config{MaxDepth: c.in}).MaxDepth; got != c.want {
+			t.Errorf("MaxDepth(%d)=%d want %d", c.in, got, c.want)
+		}
+	}
+}

@@ -111,15 +111,18 @@ func handleState(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleSave(w http.ResponseWriter, r *http.Request) {
-	var next Config
+	// 以当前配置为基底做「合并解码」：请求体里未携带的字段保留现值，
+	// 避免前端只提交部分字段时把其余字段静默重置为零值（同类问题见 FIX-A）。
+	stateMu.Lock()
+	next := cfg
+	stateMu.Unlock()
 	if err := json.NewDecoder(r.Body).Decode(&next); err != nil {
 		writeError(w, formatError("配置解析失败: %s", err))
 		return
 	}
+	// T7 裁决：空目录 = 不扫描任何目录。此处不再回填 ["/"]，
+	// 允许用户显式清空任务目录；空列表由 sweeper.run 给出明确错误提示。
 	next = normalizeConfig(next)
-	if len(next.Tasks) == 0 {
-		next.Tasks = []string{"/"}
-	}
 	stateMu.Lock()
 	cfg = next
 	err := saveConfigLocked()

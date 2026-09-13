@@ -100,6 +100,12 @@ func newSweeper(client *CD2Client, cfg Config, token *TokenInfo) *sweeper {
 // run 执行扫描（deleteMode=false 仅预览，=true 执行删除）。
 func (s *sweeper) run(ctx context.Context, deleteMode bool) (*ScanResult, error) {
 	res := &ScanResult{DeleteMode: s.deleteModeName(deleteMode)}
+	// T7 裁决：空目录 = 不扫描任何目录。提前给出明确错误，
+	// 避免「扫描显示成功、其实什么都没扫」的困惑。
+	tasks := cleanTasks(s.cfg.Tasks)
+	if len(tasks) == 0 {
+		return nil, errors.New("未配置任何目录，请先在「连接与目录」中添加要清理的目录")
+	}
 	if deleteMode {
 		if !s.cfg.AllowDelete {
 			return nil, errors.New("删除总开关未开启：请先在页面启用「允许自动清理」")
@@ -112,7 +118,7 @@ func (s *sweeper) run(ctx context.Context, deleteMode bool) (*ScanResult, error)
 		}
 	}
 
-	for _, task := range cleanTasks(s.cfg.Tasks) {
+	for _, task := range tasks {
 		off := s.client.OfflineStatus(ctx, task)
 		offPath := displayPath(s.token, task)
 		off.Path = offPath

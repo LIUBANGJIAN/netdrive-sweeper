@@ -52,7 +52,9 @@ func defaultConfig() Config {
 		EnablePush:          true,
 		PushDebounceSeconds: 5,
 		IncompleteSuffixes:  ".part,.download,.!qB,.bc!,.aria2,.crdownload,.td,.tmp,.!ut",
-		Tasks:               []string{"/"},
+		// Tasks 默认为空：空目录 = 不扫描任何目录（T7 裁决）。
+		// 仅影响「新装 / 重置」的默认值；已有配置维持原值（本次不迁移历史数据）。
+		Tasks: []string{},
 	}
 }
 
@@ -69,6 +71,14 @@ func normalizeConfig(c Config) Config {
 	c.Burst = clampInt(c.Burst, 1, 50, 10)
 	c.MaxFilesPerRun = clampInt(c.MaxFilesPerRun, 1, 100000, 2000)
 	c.MaxTotalBytes = clampInt64(c.MaxTotalBytes, 1, 1<<40, 10<<30)
+	// max_depth：0 = 不限递归深度（默认）。负数归 0；仅「过大」归 100。
+	// 不能用 clampInt(v,0,64,0) 的默认回退——那会把非法大值回退成 0（=不限），方向更危险。
+	switch {
+	case c.MaxDepth < 0:
+		c.MaxDepth = 0
+	case c.MaxDepth > 100:
+		c.MaxDepth = 100
+	}
 	c.FileCooldownHours = clampInt(c.FileCooldownHours, 0, 168, 6)
 	c.PushDebounceSeconds = clampInt(c.PushDebounceSeconds, 1, 120, 5)
 	// 防呆：未完成后缀被清空会静默废掉「含未完成后缀则整目录跳过」这道保险丝（P0-23）。
