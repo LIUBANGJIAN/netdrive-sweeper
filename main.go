@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -184,6 +185,12 @@ func handleList(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleScan(w http.ResponseWriter, r *http.Request) {
+	// T7：空目录 = 不扫描。在连接 CD2 之前先给出准确诊断，
+	// 避免「未配置任何目录」被误报成 CD2 连接错误。
+	if len(currentConfig().Tasks) == 0 {
+		writeError(w, errors.New("未配置任何目录，请先在「连接与目录」中添加要清理的目录"))
+		return
+	}
 	res, err := runScan(r.Context(), false)
 	if err != nil {
 		writeError(w, err)
@@ -193,6 +200,11 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleClean(w http.ResponseWriter, r *http.Request) {
+	// T7：空目录 = 不扫描。同 handleScan，先于 CD2 连接给出准确诊断。
+	if len(currentConfig().Tasks) == 0 {
+		writeError(w, errors.New("未配置任何目录，请先在「连接与目录」中添加要清理的目录"))
+		return
+	}
 	res, err := runScan(r.Context(), true)
 	if err != nil {
 		writeError(w, err)

@@ -95,6 +95,7 @@ section.tabpane.active{display:block}
 .formgroup input:focus,.formgroup textarea:focus,.formgroup select:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(88,166,255,.1)}
 .formgroup .help{font-size:11px;color:var(--muted);margin-top:4px}
 .formgroup .help.warn{color:var(--warning-text)}
+.checks .help.warn{margin-top:6px;padding:8px 12px;font-size:12px;line-height:1.5;color:var(--warning-text);background:var(--warning-bg);border:1px solid var(--warning);border-radius:6px}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:var(--s3)}.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--s3)}
 .checks{display:flex;gap:var(--s2);flex-wrap:wrap;margin-top:var(--s3)}
 .check{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:var(--r-sm);padding:6px 9px;background:var(--bg);font-size:12px;color:var(--text)}
@@ -336,6 +337,7 @@ table.tbl .mark{width:44px;text-align:center}
         <label class="check"><input id="deletePermanently" type="checkbox">永久删除（不进回收站）</label>
         <label class="check warn"><input id="allowDelete" type="checkbox">允许自动清理（删除总开关）</label>
         <label class="check"><input id="enablePush" type="checkbox" checked>启用事件驱动实时清理（PushMessage，修改后需重启容器生效）</label>
+        <div class="help warn hidden" id="pushWarn">当前 Token 缺少 allow_push_message，事件驱动实时清理不会生效。请在 CD2 中为该 Token 勾选该权限。</div>
       </div>
       <details class="adv" id="advBox">
         <summary>高级（保险丝与限速）</summary>
@@ -546,12 +548,19 @@ function setConn(state,info,msg){
 var PERM=[['list','allowList','allow_list'],['delete','allowDelete','allow_delete'],['perm_delete','allowDeletePermanently','allow_delete_permanently'],['push_message','allowPushMessage','allow_push_message']];
 function renderPerms(info){
   var box=el('permBadges');
-  if(!info){box.innerHTML='<span class="badge neutral">权限未读取</span>';return}
+  if(!info){box.innerHTML='<span class="badge neutral">权限未读取</span>';renderPushWarn();return}
   box.innerHTML=PERM.map(function(p){
     var has=!!info[p[1]];
     var tip=has?'':('缺少 '+p[2]+' → '+({'list':'无法读取目录','delete':'无法删除到回收站','perm_delete':'无法永久删除','push_message':'事件驱动实时清理不会生效'}[p[0]]));
     return '<span class="badge '+(has?'ok':'bad')+'" title="'+esc(tip)+'">'+p[0]+'</span>';
   }).join('');
+  renderPushWarn();
+}
+// 常驻可见的推送权限告警：勾了「事件驱动实时清理」但 Token 无 allow_push_message 时提示。
+// 修复 §0.3 #7 痛点——此前只在徽章 title 挂悬浮提示，移动端/不悬浮完全看不到，导致静默失效无解释。
+function renderPushWarn(){
+  var show=checked('enablePush')&&lastToken&&!lastToken.allowPushMessage;
+  el('pushWarn').classList.toggle('hidden',!show);
 }
 function updateNextAction(){
   var a='';
@@ -662,7 +671,7 @@ function fillConfig(c){
   el('allowDelete').checked=!!c.allow_delete;
   el('enablePush').checked=c.enable_push!==false;
   setTaskList(c.tasks&&c.tasks.length?c.tasks:[]);
-  setDirty(false);renderGuide();updateNextAction();
+  setDirty(false);renderGuide();updateNextAction();renderPushWarn();
 }
 function gatherCfg(){
   return {
@@ -690,13 +699,18 @@ function saveCfg(btn){
 /* ---------- test connection ---------- */
 function testConn(){
   var go=function(){
+    var btn=el('testBtn');
+    btn.dataset.orig=btn.textContent;btn.disabled=true;btn.textContent='测试中…';
     setConn('connecting');
     var pre=dirty?saveCfg():Promise.resolve();
     pre.then(function(){return api('/api/test?_='+Date.now())}).then(function(j){
       lastToken=j.token;renderPerms(j.token);setConn('ok',j.token);
       progress.conn=true;saveProgress();renderGuide();updateNextAction();
       toast(j.message,'success');
-    }).catch(function(e){setConn('fail',null,e.message);toast(e.message,'error')});
+    }).catch(function(e){setConn('fail',null,e.message);toast(e.message,'error')}).finally(function(){
+      // §9.9 ③：测试期间按钮 disabled + 「测试中…」，成功/失败都要恢复。
+      btn.disabled=false;if(btn.dataset.orig){btn.textContent=btn.dataset.orig;delete btn.dataset.orig}
+    });
   };
   if(dirty){confirmDialog({title:'测试前需保存配置',body:'检测到未保存的修改，测试连接需要先保存当前配置，是否继续？',okText:'保存并测试'}).then(function(ok){if(ok)go()});}
   else go();
@@ -903,6 +917,8 @@ document.querySelectorAll('#tab-logs .chip[data-logs]').forEach(function(c){c.ad
 ['address','token','adExts','videoExts','sizeLimit','opsPerSec','cooldown','excludeDirs','pushDebounce','incompleteSuffixes','maxFilesPerRun','maxTotalBytes','burst','maxDepth','forceRefresh','offlineOnly','deletePermanently','allowDelete','enablePush'].forEach(function(id){
   var e=el(id);if(!e)return;e.addEventListener('input',function(){setDirty(true)});e.addEventListener('change',function(){setDirty(true)});
 });
+// 勾选/取消「事件驱动实时清理」时同步常驻推送权限告警显隐。
+el('enablePush').addEventListener('change',renderPushWarn);
 el('browsePath').addEventListener('keydown',function(e){if(e.key==='Enter')listDir()});
 window.addEventListener('beforeunload',function(e){if(dirty){e.preventDefault();e.returnValue=''}});
 

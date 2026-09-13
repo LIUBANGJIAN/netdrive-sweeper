@@ -234,8 +234,15 @@ func contains(xs []string, v string) bool {
 func cleanTasks(tasks []string) []string {
 	seen := map[string]bool{}
 	out := []string{}
-	for _, t := range tasks {
-		t = normalizePath(t)
+	for _, raw := range tasks {
+		// 跳过空白项：空串经 normalizePath 会被规范化成 "/"，即 tasks:[""] 被静默放大为
+		// 「扫描根目录」——正是 T7 要消灭的危险路径。此处用原始串判空，
+		// 以免误伤用户显式填写的 "/"（那是合法的「扫根目录」意图）。
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		t := normalizePath(raw)
 		if !seen[t] {
 			seen[t] = true
 			out = append(out, t)
