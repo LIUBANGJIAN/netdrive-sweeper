@@ -6,6 +6,8 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/netdrive-sweeper .
 
 FROM alpine:3.20
+RUN apk add --no-cache tzdata
+ENV TZ=Asia/Shanghai
 WORKDIR /app
 COPY --from=builder /out/netdrive-sweeper /app/netdrive-sweeper
 COPY cd2.proto /app/cd2.proto

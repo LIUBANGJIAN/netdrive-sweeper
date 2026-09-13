@@ -7,7 +7,7 @@ services:
     # 因此需在 Web 页面把 CD2 地址填成宿主机内网 IP（如 192.168.1.10:19798），
     # 或使用 host.docker.internal:19798（下方 extra_hosts 已做 host-gateway 映射）。
     ports:
-      - "5000:5000"
+      - "5055:5000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -17,4 +17,5 @@ services:
       - CONFIG_PATH=/app/data/config.json
       - RECORDS_PATH=/app/data/records.jsonl
       - LOG_PATH=/app/data/clean.log
+      - TZ=Asia/Shanghai
     restart: unless-stopped

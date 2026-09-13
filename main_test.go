@@ -214,3 +214,24 @@ func TestParseTokenInfoDecodesPushPermission(t *testing.T) {
 		t.Fatalf("AllowList should be true after decoding; bytes=%s", b)
 	}
 }
+
+// TestNormalizeConfig_BackfillsIncompleteSuffixes 证明 FIX-A：
+// Web 保存把 incomplete_suffixes 写空时，normalizeConfig 会回填默认保护列表，
+// 从而不会静默废掉 P0-23「含未完成后缀则整目录跳过」这道保险丝。
+func TestNormalizeConfig_BackfillsIncompleteSuffixes(t *testing.T) {
+	c := normalizeConfig(Config{IncompleteSuffixes: ""})
+	if c.IncompleteSuffixes == "" {
+		t.Fatal("empty incomplete_suffixes must be backfilled with defaults")
+	}
+	if !containsSub(c.IncompleteSuffixes, ".part") || !containsSub(c.IncompleteSuffixes, ".!qB") {
+		t.Fatalf("backfilled incomplete_suffixes %q must contain .part and .!qB", c.IncompleteSuffixes)
+	}
+	// 仅空白也应回填。
+	if ws := normalizeConfig(Config{IncompleteSuffixes: "   "}); ws.IncompleteSuffixes == "" {
+		t.Fatal("whitespace-only incomplete_suffixes must be backfilled")
+	}
+	// 显式自定义值不得被覆盖。
+	if custom := normalizeConfig(Config{IncompleteSuffixes: ".custom"}); custom.IncompleteSuffixes != ".custom" {
+		t.Fatalf("explicit value must be preserved, got %q", custom.IncompleteSuffixes)
+	}
+}

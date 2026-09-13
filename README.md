@@ -80,7 +80,7 @@ services:
     # 因此需在 Web 页面把 CD2 地址填成宿主机内网 IP（如 192.168.1.10:19798），
     # 或使用 host.docker.internal:19798（下方 extra_hosts 已做 host-gateway 映射）。
     ports:
-      - "5000:5000"
+      - "5055:5000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -97,7 +97,7 @@ services:
 docker compose up -d
 ```
 
-> 默认即桥接（bridge）模式，因此**必须**在 Web 页面把 CD2 地址填成宿主机内网 IP（如 `192.168.1.10:19798`）或 `host.docker.internal:19798`（上方 `extra_hosts` 已做 `host-gateway` 映射）。若你希望容器直接用 `127.0.0.1:19798` 访问同机的 CD2，可改回 `network_mode: host`（此时需移除 `ports`，Web 端口即宿主机 5000）。
+> 默认即桥接（bridge）模式，因此**必须**在 Web 页面把 CD2 地址填成宿主机内网 IP（如 `192.168.1.10:19798`）或 `host.docker.internal:19798`（上方 `extra_hosts` 已做 `host-gateway` 映射）。端口映射为**宿主机 5055 → 容器 5000**，可按需改回 `5000:5000`。若你希望容器直接用 `127.0.0.1:19798` 访问同机的 CD2，可改回 `network_mode: host`（此时需移除 `ports`，Web 端口即宿主机 5000）。
 
 ### 5.2 docker run
 
@@ -117,7 +117,7 @@ go build -o netdrive-sweeper .
 ./netdrive-sweeper
 ```
 
-启动后浏览器打开 `http://<主机IP>:5000`。
+启动后浏览器打开 `http://<主机IP>:5055`。
 
 ---
 
@@ -158,7 +158,8 @@ go build -o netdrive-sweeper .
 | `max_files_per_run` | `2000` | 单轮删除文件数上限（保险丝） |
 | `max_total_bytes` | `10 GiB` | 单轮删除总字节上限 |
 | `file_cooldown_hours` | `6` | 新文件冷却小时数（保护刚到达的文件） |
-| `incomplete_suffixes` | `.part,.download,.!qB,...` | 未完成下载后缀，命中则整目录跳过 |
+| `incomplete_suffixes` | `.part,.download,.!qB,.bc!,.aria2,.crdownload,.td,.tmp,.!ut` | 含这些后缀的目录会被整目录跳过；留空将自动回填默认值，该保护不建议关闭 |
+| `force_refresh` | `false` | 强制刷新 CD2 缓存（每次 `GetSubFiles` 绕过缓存回源网盘）；非必要不建议开启，会放大网盘请求量 |
 | `enable_push` | `true` | 启用 PushMessage 事件驱动 |
 | `push_debounce_seconds` | `5` | 事件防抖秒数 |
 

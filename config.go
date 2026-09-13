@@ -71,6 +71,10 @@ func normalizeConfig(c Config) Config {
 	c.MaxTotalBytes = clampInt64(c.MaxTotalBytes, 1, 1<<40, 10<<30)
 	c.FileCooldownHours = clampInt(c.FileCooldownHours, 0, 168, 6)
 	c.PushDebounceSeconds = clampInt(c.PushDebounceSeconds, 1, 120, 5)
+	// 防呆：未完成后缀被清空会静默废掉「含未完成后缀则整目录跳过」这道保险丝（P0-23）。
+	if strings.TrimSpace(c.IncompleteSuffixes) == "" {
+		c.IncompleteSuffixes = defaultConfig().IncompleteSuffixes
+	}
 	c.Tasks = cleanTasks(c.Tasks)
 	return c
 }
