@@ -9,6 +9,6 @@ services:
     environment:
       - LISTEN=:5000
       - CONFIG_PATH=/app/data/config.json
-      - CACHE_PATH=/app/data/cache.json
+      - RECORDS_PATH=/app/data/records.jsonl
       - LOG_PATH=/app/data/clean.log
     restart: unless-stopped

@@ -1,0 +1,209 @@
+# NetDrive Sweeper · 网盘垃圾文件清理器
+
+面向 **115 / 123 网盘**（经 CloudDrive2 挂载/托管）的自动垃圾文件清理器。
+单二进制 / Docker 部署，直连 **CloudDrive2 gRPC API**，**不上挂载点、不做高频轮询**，从设计上规避网盘风控。
+
+> 典型场景：BT 离线下载的影视资源目录里，混着一堆 `.txt` 广告、`.url`/`.lnk` 快捷方式、`.html` 推广页，以及体积很小的引流视频（< 20 MB）。本工具定期/事件驱动地把它们清掉。
+
+---
+
+## 1. 它解决什么问题
+
+| 旧做法（本地 FUSE 挂载 + 遍历） | 本工具（gRPC 直连） |
+| --- | --- |
+| `os.ReadDir` / `os.Lstat` 每次都是网络回源，容易触发风控 | 一次 `GetSubFiles` 等价一次服务端 readdir，调用次数完全可控 |
+| 需要把云盘挂载进容器，权限/属主复杂 | 只连 `127.0.0.1:19798`，无需挂载 |
+| 定时轮询全树 = 高频回源 | 令牌桶限速 + **PushMessage 事件驱动** |
+
+---
+
+## 2. 核心设计原则（风控安全）
+
+1. **直连 gRPC，不经 FUSE**：所有目录读取走 CloudDrive2 的 `GetSubFiles`，删除走 `DeleteFile` / `DeleteFilePermanently`。
+2. **全局令牌桶限速**：默认 `5 ops/s`，对齐 115 官方 `maxQueriesPerSecondLimit`。每一个 gRPC 调用前先取令牌。
+3. **事件驱动而非轮询**：常驻订阅 `PushMessage` 流，收到 `FILE_SYSTEM_CHANGE` 事件后**防抖合并**再触发扫描。**禁止**任何「每 N 秒扫全树」的循环。
+4. **删除默认进网盘回收站**：默认调用 `DeleteFile`（进回收站，可恢复）；永久删除需显式开启 `delete_permanently`。
+5. **多重保险丝**：
+   - **删除总开关** `allow_delete` 默认关闭，不开则不执行任何删除；
+   - **单文件冷却**：`file_cooldown_hours` 内的新文件跳过（保护刚到达的文件）；
+   - **未完成下载保护**：目录含 `.part`/`.!qB`/`.crdownload` 等未完成后缀时**整目录跳过**；
+   - **单轮上限** `max_files_per_run`，达上限即中止本轮；
+   - **Token 权限自检**：缺 `allow_delete` 等权限时直接拒绝执行并报错。
+6. **错误不吞**：CD2 不可达 / Token 失效 / 权限不足均给出明确中文提示。
+
+---
+
+## 3. 工作原理
+
+```
+事件驱动（推荐）:
+  CD2 PushMessage 流 ──► 收到 FILE_SYSTEM_CHANGE(4)
+                          └─► 防抖 N 秒（合并突发事件）
+                                └─► 扫描配置的多目录（DFS，每次 GetSubFiles 前取令牌）
+                                      └─► 命中规则 + 通过全部保险丝 ──► 删除（回收站/永久）
+
+手动触发:
+  Web 页面「预览扫描」/「立即清理」 ──► 走同一套扫描与校验逻辑
+```
+
+命中规则：
+- **后缀命中**：`ad_exts`（默认 `.txt,.html,.url,.lnk`）→ 直接命中；
+- **小体积视频**：`video_exts`（默认 `.mp4,.mkv,.ts`）且体积 ≤ `size_limit_mb`（默认 20 MB）→ 命中；
+- **排除目录**：`exclude_dirs`（默认 `重要,备份`）名称包含关键词即整目录跳过。
+
+---
+
+## 4. 前置条件
+
+1. 已安装并运行 **CloudDrive2**，且已登录网盘账号、挂载了目标云盘。
+2. CD2 已开启 **gRPC 服务**，监听 `127.0.0.1:19798`（CD2 设置 → 启用 API / gRPC）。
+3. 在 CD2 中创建一个 **API Token**，并授予权限：
+   - `allow_list`（读目录）— **必需**
+   - `allow_delete`（删除到回收站）— 需要清理时必需
+   - `allow_delete_permanently`（永久删除）— 仅在开启永久删除时需要
+   - `allow_push_message`（推送订阅）— 需要事件驱动实时清理时必需
+4. 运行环境能访问 CD2 的 gRPC 端口（Docker 建议 `network_mode: host`，或用宿主机内网 IP）。
+
+---
+
+## 5. 快速开始
+
+### 5.1 Docker Compose（推荐）
+
+```yaml
+services:
+  netdrive-sweeper:
+    image: liubangjian/netdrive-sweeper:latest
+    container_name: netdrive-sweeper
+    network_mode: host          # CD2 监听 127.0.0.1 时必需
+    volumes:
+      - ./data:/app/data        # 配置 / 记录 / 日志持久化
+    environment:
+      - LISTEN=:5000
+      - CONFIG_PATH=/app/data/config.json
+      - RECORDS_PATH=/app/data/records.jsonl
+      - LOG_PATH=/app/data/clean.log
+    restart: unless-stopped
+```
+
+```bash
+docker compose up -d
+```
+
+> 若使用 bridge 网络，把 `network_mode: host` 换成 `ports: ["5000:5000"]`，并在页面里把 CD2 地址填成宿主机内网 IP（如 `192.168.1.10:19798`）。
+
+### 5.2 docker run
+
+```bash
+docker run -d \
+  --name netdrive-sweeper \
+  --network host \
+  -v $(pwd)/data:/app/data \
+  -e LISTEN=:5000 \
+  liubangjian/netdrive-sweeper:latest
+```
+
+### 5.3 本地构建（可选）
+
+```bash
+go build -o netdrive-sweeper .
+./netdrive-sweeper
+```
+
+启动后浏览器打开 `http://<主机IP>:5000`。
+
+---
+
+## 6. 首次配置（Web 页面）
+
+1. **填写 CD2 地址与 Token**：地址默认 `127.0.0.1:19798`；粘贴 CD2 里创建的 API Token。
+2. 点「**测试连接**」：成功会显示 Token 根目录与已授予的权限。
+3. **添加要清理的目录**（支持多目录）：从根目录逐层浏览选择，或手动填写。
+4. **设置规则**：垃圾后缀、视频后缀、体积阈值、排除目录、最大深度。
+5. **选择删除方式**：默认「进网盘回收站」；如需永久删除，勾选「永久删除」。
+6. （可选）**开启事件驱动实时清理**：勾选「启用事件驱动实时清理（PushMessage）」，并设置防抖秒数。
+7. **打开删除总开关**「允许自动清理」——这是所有删除动作的前提。
+8. 保存配置 → 用「预览扫描」确认命中列表无误 → 再点「立即清理」执行。
+
+> ⚠️ 建议先在**少量测试目录**上验证规则，确认无误后再放开到全盘。
+
+---
+
+## 7. 配置项说明
+
+配置持久化在 `data/config.json`（容器内 `/app/data/config.json`），删除/重建容器不丢失。
+
+| 键 | 默认值 | 说明 |
+| --- | --- | --- |
+| `address` | `127.0.0.1:19798` | CD2 gRPC 地址 |
+| `token` | 空 | CD2 API Token |
+| `tasks` | `["/"]` | 要清理的目录列表 |
+| `ad_exts` | `.txt,.html,.url,.lnk` | 垃圾后缀（直接命中） |
+| `video_exts` | `.mp4,.mkv,.ts` | 视频后缀（按体积判定） |
+| `size_limit_mb` | `20` | 小体积视频阈值（MB） |
+| `exclude_dirs` | `重要,备份` | 排除目录关键词 |
+| `max_depth` | `0` | 最大递归深度，`0` = 不限 |
+| `offline_only` | `true` | 仅扫描离线任务已完成的目录 |
+| `delete_permanently` | `false` | `false`=回收站，`true`=永久删除 |
+| `allow_delete` | `false` | **删除总开关**，关闭则只扫描不删除 |
+| `ops_per_sec` | `5.0` | 令牌桶速率（对齐 115 官方上限） |
+| `burst` | `10` | 令牌桶突发容量 |
+| `max_files_per_run` | `2000` | 单轮删除文件数上限（保险丝） |
+| `max_total_bytes` | `10 GiB` | 单轮删除总字节上限 |
+| `file_cooldown_hours` | `6` | 新文件冷却小时数（保护刚到达的文件） |
+| `incomplete_suffixes` | `.part,.download,.!qB,...` | 未完成下载后缀，命中则整目录跳过 |
+| `enable_push` | `true` | 启用 PushMessage 事件驱动 |
+| `push_debounce_seconds` | `5` | 事件防抖秒数 |
+
+环境变量：`LISTEN`、`CONFIG_PATH`、`RECORDS_PATH`、`LOG_PATH`。
+
+---
+
+## 8. 运行记录
+
+- **清理记录**：页面「清理记录」面板可查看每次删除的时间、路径、体积、模式（回收站/永久）、结果。落盘于 `data/records.jsonl`。
+- **运行日志**：落盘于 `data/clean.log`，页面可查看、可一键清空。
+
+---
+
+## 9. 常见问题
+
+| 现象 | 原因 / 处理 |
+| --- | --- |
+| 「CD2 不可达」 | CD2 未启动 / gRPC 未开启 / 容器未用 host 网络 / 端口不是 19798 |
+| 「Token 无效或过期」 | Token 复制不完整，或已在 CD2 侧失效 |
+| 「Token 权限不足」 | 缺 `allow_list` / `allow_delete` / `allow_push_message`，回到 CD2 重新勾选 |
+| 勾选了清理但没删掉 | 删除总开关 `allow_delete` 未开，或文件在冷却期，或目录含未完成后缀 |
+| 事件驱动不生效 | Token 缺 `allow_push_message`，或 `enable_push` 未开（不影响手动扫描） |
+| 日志里大量「跳过未完成离线目录」 | 该目录离线任务未完成，属正常保护 |
+
+---
+
+## 10. 代码结构
+
+```
+.
+├── main.go          # HTTP 服务、配置读写、扫描入口、PushMessage 消费装配
+├── cd2client.go     # CD2 gRPC 客户端（dynamicpb + protocompile 动态解析 cd2.proto）
+├── config.go        # 配置结构、默认值、归一化、持久化
+├── limiter.go       # 令牌桶限速
+├── sweeper.go       # 扫描 + 规则判定 + 保险丝 + 删除 + 审计记录
+├── push.go          # PushConsumer：PushMessage 订阅 / 防抖 / 断线重连
+├── web.go           # 内嵌 Web 界面（embed）
+├── cd2.proto        # CD2 gRPC 精简 proto（运行时解析，无需 protoc）
+├── main_test.go     # 单元测试
+├── Dockerfile
+├── docker-compose.yml
+└── .github/workflows/docker-build.yml   # CI：构建并推送镜像到 Docker Hub
+```
+
+---
+
+## 11. 免责声明
+
+本工具会**删除网盘文件**。默认删除进回收站，但仍建议：
+- 首次使用先在测试目录验证；
+- 保持 `allow_delete` 关闭、用「预览扫描」确认规则；
+- 重要目录务必加入 `exclude_dirs`。
+
+因使用本工具造成的任何数据丢失，使用者自行承担。

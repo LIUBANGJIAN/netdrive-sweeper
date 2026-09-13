@@ -15,6 +15,8 @@ service CloudDriveFileSrv {
   rpc DeleteFilePermanently(FileRequest) returns (FileOperationResult) {}
   rpc ListOfflineFilesByPath(FileRequest) returns (OfflineFileListResult) {}
   rpc ListAllOfflineFiles(OfflineFileListAllRequest) returns (OfflineFileListAllResult) {}
+  // PushMessage 是 CD2 服务器推送流（事件驱动实时感知的唯一合法来源）。
+  rpc PushMessage(google.protobuf.Empty) returns (stream CloudDrivePushMessage) {}
 }
 
 enum OfflineStatus {
@@ -51,6 +53,14 @@ message CloudDriveSystemInfo {
   bool systemReady = 1;
   string userName = 2;
   string version = 3;
+}
+
+// CloudDrivePushMessage 仅解码 messageType（字段1，FILE_SYSTEM_CHANGE=4）。
+// oneof data（字段2-8）暂不解码：官方 FileSystemChange 的字段号未在指南中给出，
+// 为避免猜错字段号，只依赖 messageType 触发防抖重扫。proto.Unmarshal 对未知字段
+// 不会报错（落入 unknown fields），因此只声明字段1 是安全的。
+message CloudDrivePushMessage {
+  int32 messageType = 1;
 }
 
 message ListSubFileRequest {
@@ -110,6 +120,7 @@ message TokenPermissions {
   bool allow_copy = 10;
   bool allow_delete = 11;
   bool allow_delete_permanently = 12;
+  bool allow_push_message = 41;  // 0.9.15 新增：PushMessage/PushTaskChange 订阅权限
 }
 
 message TokenInfo {
