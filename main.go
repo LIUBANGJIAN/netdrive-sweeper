@@ -28,6 +28,11 @@ var (
 	cfg        = defaultConfig()
 	statusInfo = RuntimeStatus{LastMessage: "未连接"}
 	scanBusy   bool
+
+	// lastResult / lastScanAt 记录最近一次扫描/清理结果（含事件驱动后台触发），
+	// 供前端打开页面时自动呈现，避免「事件已在后台跑、页面却空空如也」。
+	lastResult *ScanResult
+	lastScanAt time.Time
 )
 
 // 应用级根上下文：用于常驻的 PushMessage 事件驱动订阅，随进程生命周期存续。
@@ -62,6 +67,7 @@ func main() {
 	mux.HandleFunc("/api/records", handleRecords)
 	mux.HandleFunc("/api/logs", handleLogs)
 	mux.HandleFunc("/api/clear_logs", handleClearLogs)
+	mux.HandleFunc("/api/last_scan", handleLastScan)
 
 	log.Printf("%s 启动，监听 %s，配置文件: %s", appName, listenAddr, configPath)
 	if err := http.ListenAndServe(listenAddr, mux); err != nil {
@@ -231,6 +237,14 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"logs": string(b)})
 }
 
+func handleLastScan(w http.ResponseWriter, r *http.Request) {
+	stateMu.Lock()
+	res := lastResult
+	at := lastScanAt
+	stateMu.Unlock()
+	writeJSON(w, map[string]any{"ok": true, "result": res, "at": at})
+}
+
 func handleClearLogs(w http.ResponseWriter, r *http.Request) {
 	ensureDataDirs()
 	_ = os.WriteFile(logPath, nil, 0644)
@@ -286,7 +300,15 @@ func runScan(ctx context.Context, deleteMode bool) (*ScanResult, error) {
 	defer client.Close()
 	cfg := currentConfig()
 	sw := newSweeper(client, cfg, token)
-	return sw.run(ctx, deleteMode)
+	res, err := sw.run(ctx, deleteMode)
+	if err == nil {
+		// 记录最近一次结果，供前端自动呈现（含事件驱动后台触发）。
+		stateMu.Lock()
+		lastResult = res
+		lastScanAt = time.Now()
+		stateMu.Unlock()
+	}
+	return res, err
 }
 
 // startPushConsumer 常驻运行事件驱动实时清理。连接失败会记日志并每 10s 重试，
