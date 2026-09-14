@@ -334,6 +334,7 @@ details.adv .adv-body{padding:0 12px 12px}
 <script>
 var state={},dirty=false,lastScan=null,lastScanTime='',lastToken=null,savedOnce=false;
 var lastPush={state:'off',detail:'',events:0,lastEvent:''};
+var lastStatus=null; // 最近的 /api/state|/api/push 运行状态（含 cloudApis 云端事件监听器状态）
 var logState={level:'all',search:'',follow:true,raw:''};
 var activeTab='logs';
 
@@ -462,7 +463,10 @@ function renderPush(p){
   tag.title=lastPush.detail||'';
   var st=lastPush.state,html='';
   if(st==='running'){
-    html='<div class="banner banner-info">事件驱动实时清理<b>运行中</b>：'+esc(lastPush.detail||'')+'；已收到 '+(lastPush.events||0)+' 个文件变更事件'+(lastPush.lastEvent?('，最近 '+esc(lastPush.lastEvent)):'')+'。</div>';
+    var live='';
+    if(lastPush.lastMessageAt)live+='；最近收到推送 '+esc(lastPush.lastMessageAt);
+    if(lastPush.lastEventPath)live+='（最近变更 '+esc(lastPush.lastEventPath)+'）';
+    html='<div class="banner banner-info">事件驱动实时清理<b>运行中</b>：'+esc(lastPush.detail||'')+'；已收到 '+(lastPush.events||0)+' 个文件变更事件'+(lastPush.lastEvent?('，最近 '+esc(lastPush.lastEvent)):'')+live+'。</div>';
   }else if(st==='denied'){
     html='<div class="banner banner-danger">事件驱动实时清理<b>未生效</b>：'+esc(lastPush.detail||'')+'。请在 CD2 为该 Token 勾选 allow_push_message，然后回本页点「保存配置」（无需重启容器）。</div>';
   }else if(st==='error'){
@@ -471,6 +475,13 @@ function renderPush(p){
     html='<div class="banner banner-warn">事件驱动实时清理未启动：'+esc(lastPush.detail||'')+'。保存配置后会自动启动，无需重启容器。</div>';
   }else if(st==='connecting'){
     html='<div class="banner banner-warn">事件驱动实时清理正在连接 CD2…</div>';
+  }
+  // 云端事件监听器告警：仅在拿到数据且确有掉线云盘时提示（拿不到时静默降级，不误报）。
+  if(lastStatus&&lastStatus.cloudApis&&lastStatus.cloudApis.length){
+    var down=lastStatus.cloudApis.filter(function(a){return a.isCloudEventListenerRunning===false});
+    if(down.length){
+      html+='<div class="banner banner-danger">警告：CD2 云盘「'+down.map(function(a){return esc(a.name)}).join('、')+'」的云端事件监听器未运行，CD2 将不再推送文件变更事件，事件驱动清理不会触发；请在 CD2 中检查该云盘连接/重新登录。</div>';
+    }
   }
   el('pushHint').innerHTML=html;
 }
@@ -762,6 +773,7 @@ window.addEventListener('beforeunload',function(e){if(dirty){e.preventDefault();
 /* ---------- push 状态 / 最近结果（自动呈现后台动作）---------- */
 function loadPush(){
   return api('/api/push?_='+Date.now()).then(function(j){
+    if(j.status)lastStatus=j.status;
     renderPush(j.push);
     // 运行状态（含 Token 权限）由后端在「启动自检 / 保存自检 / 订阅成功」时写入，
     // 前端据此自动点亮连接状态与权限徽章——用户不必再手点一次「测试连接」。
@@ -790,6 +802,7 @@ function load(){
   return api('/api/state?_='+Date.now()).then(function(j){
     state=j;fillConfig(j.config);
     var t=validTime(j.lastScanAt);if(t)lastScanTime=t;
+    lastStatus=j.status||null;
     renderPush(j.push);
     lastToken=j.status&&j.status.token?j.status.token:null;
     if(lastToken){renderPerms(lastToken);setConn('ok',lastToken)}else{renderPerms(null);setConn('none')}

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"math/rand"
 	"sync"
 	"time"
 )
@@ -36,6 +38,11 @@ type pushConsumer struct {
 
 	tmu  sync.Mutex     // 保护 seen
 	seen map[int32]bool // 已见过的消息类型（用于首次诊断日志，避免重复刷屏）
+
+	dmu          sync.Mutex // 保护 dedup / fscProbeLeft
+	dedupSec     string     // 最近一次记录的秒（同秒同路径去重用）
+	dedupPath    string     // 最近一次记录的路径
+	fscProbeLeft int        // 剩余可打印「原始字段」诊断的事件数（首帧探测）
 }
 
 // newPushConsumer 构造一个 pushConsumer。debounce <= 0 时回退到 5 秒。
@@ -44,13 +51,65 @@ func newPushConsumer(client *CD2Client, debounce time.Duration, trigger func()) 
 		debounce = 5 * time.Second
 	}
 	return &pushConsumer{
-		client:   client,
-		debounce: debounce,
-		maxDelay: 6 * debounce, // 默认 5s 防抖 → 30s 上限
-		trigger:  trigger,
-		log:      appendLog,
-		seen:     map[int32]bool{},
+		client:       client,
+		debounce:     debounce,
+		maxDelay:     6 * debounce, // 默认 5s 防抖 → 30s 上限
+		trigger:      trigger,
+		log:          appendLog,
+		seen:         map[int32]bool{},
+		fscProbeLeft: 5, // 只对前 5 个 FSC 事件打印原始字段结构（拿到真实字段号后即可停用）
 	}
+}
+
+// onEvent 是 PushMessage 的回调入口：先做「事件可诊断性」记录，再进入既有防抖逻辑。
+// 说明：handle(messageType int32) 的签名与实现保持不变（既有测试与结构锚定依赖它），
+// 带负载的 PushEvent 在本函数里被消费，handle 继续只负责防抖调度。
+func (p *pushConsumer) onEvent(ev PushEvent) {
+	// 任意类型的推送到达都是「订阅存活」的证据。
+	markPushMessage(ev.Type)
+	if isFileSystemChange(ev.Type) {
+		p.logFileSystemChange(ev)
+		markPushEventPath(ev.Path)
+	}
+	p.handle(ev.Type)
+}
+
+// logFileSystemChange 记录一条文件系统变更事件（带路径）。FSC 是核心信号，每条都记；
+// 仅对「同一秒内同路径」的重复明细做抑制（首次照记），避免刷屏。前 N 条附带原始字段诊断。
+func (p *pushConsumer) logFileSystemChange(ev PushEvent) {
+	sec := time.Now().Format("2006-01-02 15:04:05")
+
+	p.dmu.Lock()
+	probe := p.fscProbeLeft > 0
+	if probe {
+		p.fscProbeLeft--
+	}
+	dup := ev.Path != "" && p.dedupSec == sec && p.dedupPath == ev.Path
+	p.dedupSec, p.dedupPath = sec, ev.Path
+	p.dmu.Unlock()
+
+	if probe && p.log != nil {
+		p.log("【诊断】FILE_SYSTEM_CHANGE 原始字段：%s", ev.Raw)
+	}
+	if p.log == nil {
+		return
+	}
+	if dup {
+		return
+	}
+	if ev.Path == "" {
+		p.log("收到文件系统变更事件（%s）：路径未知", changeTypeText(ev))
+		return
+	}
+	p.log("收到文件系统变更事件（%s）：%s", changeTypeText(ev), ev.Path)
+}
+
+// changeTypeText 渲染变更类型描述。字段号未知故不做语义命名，仅在能提取到数值时给出原始值。
+func changeTypeText(ev PushEvent) string {
+	if !ev.ChangeOK {
+		return "变更类型未知"
+	}
+	return fmt.Sprintf("changeType=%d", ev.ChangeType)
 }
 
 // pushTypeName 返回消息类型的中文名，仅用于日志诊断。
@@ -185,25 +244,62 @@ func (p *pushConsumer) rearm() {
 	p.mu.Unlock()
 }
 
-// run 常驻订阅直到 ctx 取消。订阅断开后按固定退避重连（重连退避不是扫描循环，允许）。
+// run 常驻订阅直到 ctx 取消。订阅断开后按「指数 + 抖动」退避重连（重连退避不是扫描循环，允许）。
+// 建立/中断每次都有日志，使「刚建立就被服务端关掉」的抖动一眼可见。
 // 严禁在此处做任何「每 N 秒扫全树」的定时任务。
 func (p *pushConsumer) run(ctx context.Context) {
-	const backoff = 10 * time.Second
+	attempt := 0
 	for {
 		if ctx.Err() != nil {
 			return
 		}
-		err := p.client.SubscribePush(ctx, p.handle)
+		attempt++
+		if p.log != nil {
+			p.log("正在建立 PushMessage 订阅（第 %d 次）", attempt)
+		}
+		err := p.client.SubscribePush(ctx, p.onEvent)
 		if ctx.Err() != nil {
 			return
 		}
+		delay := withReconnectJitter(reconnectBackoff(attempt-1), rand.Float64())
 		if p.log != nil {
-			p.log("PushMessage 订阅断开，%s 后重连: %v", backoff, err)
+			if err == nil {
+				p.log("PushMessage 订阅已结束（服务端关闭了订阅流，第 %d 次），%s 后重连", attempt, delay)
+			} else {
+				p.log("PushMessage 订阅中断（第 %d 次），%s 后重连：%v", attempt, delay, err)
+			}
 		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(backoff):
+		case <-time.After(delay):
 		}
 	}
+}
+
+const (
+	reconnectBase = 2 * time.Second  // 首次重连基础退避
+	reconnectMax  = 30 * time.Second // 退避封顶
+)
+
+// reconnectBackoff 返回第 attempt 次（0 起）重连的基础退避：2s→4s→8s→16s→30s 封顶。
+// 纯函数，便于断言「单调不减且封顶」。
+func reconnectBackoff(attempt int) time.Duration {
+	d := reconnectBase
+	for i := 0; i < attempt; i++ {
+		if d >= reconnectMax {
+			break
+		}
+		d *= 2
+	}
+	if d > reconnectMax {
+		d = reconnectMax
+	}
+	return d
+}
+
+// withReconnectJitter 给退避叠加 [0.8, 1.0) 倍抖动（rnd ∈ [0,1)），避免多实例同时重连。
+func withReconnectJitter(d time.Duration, rnd float64) time.Duration {
+	f := 0.8 + 0.2*rnd
+	return time.Duration(float64(d) * f)
 }

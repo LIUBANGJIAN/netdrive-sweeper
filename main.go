@@ -42,11 +42,14 @@ var (
 // 「运行中 / 未启用 / 权限不足 / 连接失败重试中」。这是修复「改配置后必须重启容器、
 // 否则事件驱动静默失效且毫无解释」的关键——把隐性约束变成显式状态。
 type PushRuntime struct {
-	State     string `json:"state"`     // off|config_missing|connecting|running|denied|error
-	Detail    string `json:"detail"`    // 人类可读说明
-	Since     string `json:"since"`     // 进入该状态的时间
-	Events    int    `json:"events"`    // 已收到的文件系统变更事件数
-	LastEvent string `json:"lastEvent"` // 最近一次文件系统变更事件时间
+	State         string        `json:"state"`                   // off|config_missing|connecting|running|denied|error
+	Detail        string        `json:"detail"`                  // 人类可读说明
+	Since         string        `json:"since"`                   // 进入该状态的时间
+	Events        int           `json:"events"`                  // 已收到的文件系统变更事件数
+	LastEvent     string        `json:"lastEvent"`               // 最近一次文件系统变更事件时间
+	LastEventPath string        `json:"lastEventPath,omitempty"` // 最近一次文件系统变更事件的路径（尽力而为提取）
+	LastMessageAt string        `json:"lastMessageAt,omitempty"` // 最近一次收到任意类型推送消息的时间（订阅存活证据）
+	TypeCounts    map[int32]int `json:"typeCounts,omitempty"`    // 各 messageType 的累计到达次数
 }
 
 var (
@@ -71,6 +74,7 @@ type RuntimeStatus struct {
 	LastMessage string     `json:"last_message"`
 	Token       *TokenInfo `json:"token,omitempty"`
 	DeleteMode  string     `json:"deleteMode,omitempty"`
+	CloudAPIs   []CloudAPI `json:"cloudApis,omitempty"` // 各云盘连接与云端事件监听器状态
 }
 
 func main() {
@@ -380,10 +384,19 @@ func runScan(ctx context.Context, deleteMode bool) (*ScanResult, error) {
 // ---------- 事件驱动实时清理：监督器 + 订阅 ----------
 
 // pushSnapshot 返回一份推送运行时状态快照（供 /api/state 输出）。
+// TypeCounts 做深拷贝：避免调用方在锁外 JSON 序列化时与写入方并发访问同一张 map。
 func pushSnapshot() PushRuntime {
 	pushMu.Lock()
 	defer pushMu.Unlock()
-	return pushStat
+	s := pushStat
+	if pushStat.TypeCounts != nil {
+		m := make(map[int32]int, len(pushStat.TypeCounts))
+		for k, v := range pushStat.TypeCounts {
+			m[k] = v
+		}
+		s.TypeCounts = m
+	}
+	return s
 }
 
 // setPushState 更新推送运行时状态（自持锁）。注意：不要在本函数内再取 pushMu 之外的锁后回调，
@@ -408,6 +421,34 @@ func bumpPushEvent() {
 	pushMu.Unlock()
 }
 
+// markPushMessage 记录「收到任意类型推送消息」的时间与类型计数——这是订阅存活的唯一可信证据。
+func markPushMessage(messageType int32) {
+	pushMu.Lock()
+	if pushStat.TypeCounts == nil {
+		pushStat.TypeCounts = map[int32]int{}
+	}
+	pushStat.TypeCounts[messageType]++
+	pushStat.LastMessageAt = time.Now().Format("2006-01-02 15:04:05")
+	pushMu.Unlock()
+}
+
+// markPushEventPath 记录最近一次文件系统变更事件的路径（尽力而为提取，空串则忽略）。
+func markPushEventPath(path string) {
+	if path == "" {
+		return
+	}
+	pushMu.Lock()
+	pushStat.LastEventPath = path
+	pushMu.Unlock()
+}
+
+// setCloudAPIs 写入各云盘连接与云端事件监听器状态，供 /api/state 与前端 banner 展示。
+func setCloudAPIs(apis []CloudAPI) {
+	stateMu.Lock()
+	statusInfo.CloudAPIs = apis
+	stateMu.Unlock()
+}
+
 // wakePushSupervisor 非阻塞唤醒监督器，使其按最新配置热重启订阅。
 func wakePushSupervisor() {
 	pushRev.Add(1)
@@ -429,6 +470,7 @@ func pushConfigSignature(c Config) string {
 // 触发时机：进程启动 + 每次保存配置（唤醒） + 20s 兜底巡检。
 // 它只读内存配置、不做任何网络轮询，因此与「禁止定时扫全树」的风控约束不冲突。
 func pushSupervisor(ctx context.Context) {
+	lastReason := "" // 上次已记录的「未启动原因」：仅在变化时记日志，避免 20s 刷屏
 	for {
 		c := currentConfig()
 		want := c.EnablePush && normalizeAddress(c.Address) != "" && strings.TrimSpace(c.Token) != ""
@@ -461,6 +503,14 @@ func pushSupervisor(ctx context.Context) {
 		}
 		pushMu.Unlock()
 
+		// 锁外记日志：仅在「未启动原因」发生变化（含进程启动后的首次巡检）时记一条完整诊断行。
+		// 这样每次容器启动的日志里都有一行能回答：事件驱动是否启用 / 地址是什么 / Token 有没有 / 清理目录几个。
+		line, newLast := pushSupervisorLogReason(want, c, lastReason)
+		if line != "" {
+			appendLog("%s", line)
+		}
+		lastReason = newLast
+
 		select {
 		case <-ctx.Done():
 			return
@@ -468,6 +518,34 @@ func pushSupervisor(ctx context.Context) {
 		case <-time.After(20 * time.Second):
 		}
 	}
+}
+
+// pushSupervisorLogReason 决定本次巡检是否要写一条「事件驱动未启动」诊断行，并返回更新后的 lastReason。
+// 抽成纯函数以便单测「原因变化时才记、不刷屏」。want=true（已启动）时返回空并复位 lastReason，
+// 便于下次停止时重新记录。
+func pushSupervisorLogReason(want bool, c Config, lastReason string) (line, newLast string) {
+	if want {
+		return "", ""
+	}
+	reason := pushDisabledReason(c)
+	if reason == lastReason {
+		return "", lastReason
+	}
+	return pushDisableLogLine(c), reason
+}
+
+// pushDisableLogLine 生成「事件驱动未启动」的完整诊断行。Token 仅打「有/无」，绝不回显明文。
+func pushDisableLogLine(c Config) string {
+	return fmt.Sprintf("事件驱动未启动：%s（地址=%q Token=%s 启用=%v 清理目录=%d 个）",
+		pushDisabledReason(c), normalizeAddress(c.Address), tokenPresence(c.Token), c.EnablePush, len(cleanTasks(c.Tasks)))
+}
+
+// tokenPresence 返回 Token 的「有/无」描述，避免把 Token 明文写进日志。
+func tokenPresence(tok string) string {
+	if strings.TrimSpace(tok) == "" {
+		return "无"
+	}
+	return "有"
 }
 
 // runPushConsumer 常驻运行事件驱动实时清理，直到 ctx 取消。
@@ -511,7 +589,7 @@ func runPushConsumer(ctx context.Context, c Config) {
 		// 先声明后赋值：让 trigger 闭包能引用 p 本身，从而在扫描互斥时 rearm 重试。
 		var p *pushConsumer
 		p = newPushConsumer(client, debounce, func() {
-			appendLog("收到文件系统变更事件，防抖后触发扫描")
+			appendLog("事件驱动：防抖后触发扫描")
 			// runScan 自带 scanBusy 互斥，进行中会返回「已有扫描任务」错误。
 			res, serr := runScan(ctx, currentConfig().AllowDelete)
 			if serr != nil {
@@ -528,7 +606,7 @@ func runPushConsumer(ctx context.Context, c Config) {
 			appendLog("事件触发扫描完成 checked=%d matched=%d deleted=%d", res.Checked, res.Matched, res.Deleted)
 		})
 		setPushState("running", fmt.Sprintf("运行中（PushMessage 已订阅，防抖 %ds）", c.PushDebounceSeconds))
-		appendLog("事件驱动实时清理已启动（PushMessage，防抖 %ds）", c.PushDebounceSeconds)
+		appendLog("事件驱动实时清理已启动（PushMessage，防抖 %ds，地址=%s）", c.PushDebounceSeconds, normalizeAddress(c.Address))
 		p.run(ctx) // 常驻订阅；内部自带重连退避，ctx 取消时返回
 		client.Close()
 		setPushState("off", "订阅已结束")
@@ -601,6 +679,9 @@ func statusMonitor(ctx context.Context) {
 	prevUp := false    // 上次探测是否连上：仅在翻转时记日志
 	probed := false    // 是否已探测过：让「首次不可达」也留下一条可读日志
 
+	var listenerKey string // 上次已记录的云端事件监听器状态签名
+	var listenerCheckedAt time.Time
+
 	for {
 		if ctx.Err() != nil {
 			return
@@ -618,8 +699,9 @@ func statusMonitor(ctx context.Context) {
 
 		token, err := probeCD2Status(ctx, c)
 		up := err == nil
+		flipped := up && !prevUp
 		switch {
-		case up && !prevUp: // 首次连上 或 由失败恢复正常
+		case flipped: // 首次连上 或 由失败恢复正常
 			appendLog("状态自检：CD2 连接正常，Token 根目录 %s；权限 %s", token.RootDir, permSummary(token))
 		case !up && prevUp: // 由正常转为失败
 			appendLog("状态自检：CD2 连接中断（%v），将持续重试", err)
@@ -628,6 +710,12 @@ func statusMonitor(ctx context.Context) {
 		}
 		if up {
 			connected = true
+			// 云端事件监听器状态：连接翻转时立即查一次，之后最多每 2 分钟一次并缓存。
+			// 这是轻量元数据查询（不遍历目录），是「事件驱动忽然失效」的关键诊断信号。
+			if flipped || listenerKey == "" || time.Since(listenerCheckedAt) >= cloudListenerInterval {
+				listenerCheckedAt = time.Now()
+				listenerKey = checkCloudEventListeners(ctx, c, listenerKey)
+			}
 		}
 		prevUp = up
 		probed = true
@@ -644,6 +732,53 @@ func statusMonitor(ctx context.Context) {
 			return
 		}
 	}
+}
+
+// cloudListenerInterval 是云端事件监听器状态的稳态复查间隔（2 分钟）。它是轻量元数据查询，
+// 不遍历目录；配合「仅连接翻转时立即查一次」，既及时发现掉线又能压低请求频次。
+const cloudListenerInterval = 2 * time.Minute
+
+// checkCloudEventListeners 查询各云盘的云端事件监听器状态（轻量元数据，不遍历目录），
+// 写入 statusInfo.CloudAPIs，并在结果变化时记日志（含 isCloudEventListenerRunning=false 的醒目告警）。
+// 返回本次结果签名（供调用方做「仅变化时记日志」的节流）。查询失败静默降级，绝不误报。
+func checkCloudEventListeners(ctx context.Context, c Config, lastKey string) string {
+	client, err := newCD2Client(c)
+	if err != nil {
+		return lastKey
+	}
+	defer client.Close()
+	qctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	apis, err := client.CloudAPIs(qctx)
+	if err != nil {
+		return lastKey // 静默降级：拿不到时保持上一次结果，不误报（也不清空 statusInfo.CloudAPIs）
+	}
+	setCloudAPIs(apis)
+	lines, key := cloudListenerReport(apis)
+	if key == lastKey {
+		return lastKey
+	}
+	for _, ln := range lines {
+		appendLog("%s", ln)
+	}
+	return key
+}
+
+// cloudListenerReport 依据云盘列表生成「需要记录的日志行」与稳定签名 key。
+// 纯函数，便于单测：isCloudEventListenerRunning=false 时产出醒目告警，key 变化即代表结果变化。
+func cloudListenerReport(apis []CloudAPI) (lines []string, key string) {
+	parts := make([]string, 0, len(apis))
+	for _, a := range apis {
+		parts = append(parts, fmt.Sprintf("%s=%v", a.Name, a.IsCloudEventListenerRunning))
+		if a.IsCloudEventListenerRunning {
+			lines = append(lines, fmt.Sprintf("CD2 云盘「%s」云端事件监听器运行中（isCloudEventListenerRunning=true）", a.Name))
+			continue
+		}
+		lines = append(lines, fmt.Sprintf(
+			"警告：CD2 云盘「%s」的云端事件监听器未运行（isCloudEventListenerRunning=false）——CD2 将不再推送文件变更事件，事件驱动清理不会触发；请在 CD2 中检查该云盘连接/重新登录。",
+			a.Name))
+	}
+	return lines, strings.Join(parts, ";")
 }
 
 // connectPushClient 建立并校验一次 PushMessage 订阅所需的连接（TCP 探测 + Token 校验）。
