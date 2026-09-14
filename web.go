@@ -64,6 +64,7 @@ a{color:var(--blue)}
 /* ---------- layout ---------- */
 .main{max-width:1400px;margin:0 auto;padding:var(--s4)}
 .grid{display:grid;grid-template-columns:1fr 380px;gap:var(--s4)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:var(--s4)}
 .col{display:grid;gap:var(--s4);align-content:start}
 section.tabpane{display:none}
 section.tabpane.active{display:block}
@@ -225,11 +226,14 @@ table.tbl .mark{width:44px;text-align:center}
 .modal-list li{margin:2px 0}
 .modal-input{width:100%;margin-top:10px;background:var(--bg);border:1px solid var(--line);color:var(--text);border-radius:var(--r-md);padding:9px 11px;font-size:13px;height:36px}
 .modal-actions{display:flex;justify-content:flex-end;gap:var(--s2);margin-top:var(--s4)}
+.modal.wide{width:640px}
+.dirpick{max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:var(--r-md);background:var(--bg)}
+.dirpick .diritem:last-child{border-bottom:0}
 #busy{position:fixed;inset:0;z-index:var(--z-busy);display:none;align-items:center;justify-content:center;background:rgba(1,4,9,.35)}
 .busy-inner{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);padding:16px 20px;display:flex;align-items:center;gap:10px;box-shadow:0 8px 24px rgba(0,0,0,.4);font-size:13px}
 
 /* ---------- responsive ---------- */
-@media(max-width:1199px){.grid{grid-template-columns:1fr}}
+@media(max-width:1199px){.grid,.grid2{grid-template-columns:1fr}}
 @media(max-width:767px){
  .main{padding:12px}.topbar{padding:8px 12px}
  .row2,.row3{grid-template-columns:1fr}
@@ -278,7 +282,7 @@ table.tbl .mark{width:44px;text-align:center}
 <main class="main">
   <!-- ① 连接与目录 -->
   <section class="tabpane" id="tab-conn">
-    <div class="grid">
+    <div class="grid2">
       <div class="col">
         <div class="card">
           <h2>① 连接与目录 · CD2 连接</h2>
@@ -295,26 +299,13 @@ table.tbl .mark{width:44px;text-align:center}
           </div>
           <div class="help" style="margin-top:8px">测试连接会先保存当前配置（如有未保存修改会先询问）。</div>
         </div>
-        <div class="card">
-          <h2>清理目录<span class="spacer"></span><span class="badge count" id="taskCount">0</span></h2>
-          <div class="sub">列表为空时不会扫描任何目录（不会隐式扫全盘）。</div>
-          <div class="panel" id="taskList"></div>
-          <div class="actions"><button class="btn btn-danger" id="clearTasksBtn">清空目录</button></div>
-        </div>
       </div>
       <div class="col">
         <div class="card">
-          <h2>目录浏览</h2>
-          <div class="crumbs" id="crumbs"></div>
-          <div class="formgroup">
-            <label>当前路径（可编辑后加载）</label>
-            <div class="inline"><input id="browsePath" value="/"><button class="btn btn-ghost" id="listBtn">加载</button></div>
-          </div>
-          <div class="actions" style="margin-top:0">
-            <button class="btn btn-ok" id="addCurrentBtn" title="把当前路径加入清理目录">加入当前路径</button>
-            <button class="btn btn-primary" id="addAllBtn" title="把勾选的子目录加入清理目录">加入选中 (0)</button>
-          </div>
-          <div class="panel" id="dirPanel" style="margin-top:10px"><div class="list-empty">输入路径后点「加载」</div></div>
+          <h2>清理目录<span class="spacer"></span><button class="btn btn-ok btn-sm" id="openDirPick">＋ 添加目录</button><span class="badge count" id="taskCount">0</span></h2>
+          <div class="sub">点击「＋ 添加目录」从网盘弹框浏览选择；列表为空时不会扫描任何目录（不会隐式扫全盘）。</div>
+          <div class="panel" id="taskList"></div>
+          <div class="actions"><button class="btn btn-danger" id="clearTasksBtn">清空目录</button></div>
         </div>
       </div>
     </div>
@@ -416,40 +407,36 @@ table.tbl .mark{width:44px;text-align:center}
 
   <!-- ④ 记录与日志 -->
   <section class="tabpane" id="tab-logs">
-    <div class="card">
-      <h2>④ 记录与日志</h2>
-      <div class="chips" style="margin-bottom:12px">
-        <span class="chip active" data-logs="records">清理记录</span>
-        <span class="chip" data-logs="logs">运行日志</span>
-      </div>
-      <div id="paneRecords">
-        <div class="tblbar">
-          <input type="text" id="recSearch" placeholder="按路径/结果过滤…">
-          <div class="chips" id="recChips">
-            <span class="chip active" data-rec="all">全部</span>
-            <span class="chip" data-rec="ok">成功</span>
-            <span class="chip" data-rec="fail">失败</span>
+    <div class="grid2">
+      <div class="col">
+        <div class="card">
+          <h2>清理记录<span class="spacer"></span><button class="btn btn-ghost btn-sm" id="recordsBtn">刷新</button><span class="muted" id="recCount"></span></h2>
+          <div class="tblbar">
+            <input type="text" id="recSearch" placeholder="按路径/结果过滤…">
+            <div class="chips" id="recChips">
+              <span class="chip active" data-rec="all">全部</span>
+              <span class="chip" data-rec="ok">成功</span>
+              <span class="chip" data-rec="fail">失败</span>
+            </div>
           </div>
-          <button class="btn btn-ghost btn-sm" id="recordsBtn">刷新</button>
-          <span class="muted" id="recCount"></span>
+          <div class="panel" id="recPanel"><div class="list-empty"><span class="ico">📄</span><span class="t">暂无清理记录</span><div>执行清理或启用事件驱动后，记录会显示在这里</div></div></div>
         </div>
-        <div class="panel" id="recPanel"><div class="list-empty"><span class="ico">📄</span><span class="t">暂无清理记录</span><div>执行清理或启用事件驱动后，记录会显示在这里</div></div></div>
       </div>
-      <div id="paneLogs" class="hidden">
-        <div class="tblbar">
-          <input type="text" id="logSearch" placeholder="按关键字过滤日志…">
-          <div class="chips" id="logChips">
-            <span class="chip active" data-log="all">全部</span>
-            <span class="chip" data-log="error">错误</span>
-            <span class="chip" data-log="warn">警告</span>
+      <div class="col">
+        <div class="card">
+          <h2>运行日志<span class="spacer"></span><button class="btn btn-ghost btn-sm" id="logCopyBtn">复制</button><button class="btn btn-ghost btn-sm" id="logsBtn">刷新</button><button class="btn btn-danger btn-sm" id="clearLogsBtn">清空</button></h2>
+          <div class="tblbar">
+            <input type="text" id="logSearch" placeholder="按关键字过滤日志…">
+            <div class="chips" id="logChips">
+              <span class="chip active" data-log="all">全部</span>
+              <span class="chip" data-log="error">错误</span>
+              <span class="chip" data-log="warn">警告</span>
+            </div>
+            <label class="check"><input type="checkbox" id="logFollow" checked>跟随最新</label>
+            <button class="backlatest hidden" id="logBackBottom">↓ 回到最新</button>
           </div>
-          <label class="check"><input type="checkbox" id="logFollow" checked>跟随最新</label>
-          <button class="backlatest hidden" id="logBackBottom">↓ 回到最新</button>
-          <button class="btn btn-ghost btn-sm" id="logCopyBtn">复制</button>
-          <button class="btn btn-ghost btn-sm" id="logsBtn">刷新</button>
-          <button class="btn btn-danger btn-sm" id="clearLogsBtn">清空</button>
+          <div class="logbox" id="logsBox"><div class="list-empty"><span class="ico">📝</span><span class="t">暂无运行日志</span></div></div>
         </div>
-        <div class="logbox" id="logsBox"><div class="list-empty"><span class="ico">📝</span><span class="t">暂无运行日志</span></div></div>
       </div>
     </div>
   </section>
@@ -637,9 +624,35 @@ el('taskList').addEventListener('click',function(e){var b=e.target.closest('.min
 function addTask(p){var t=taskList();if(t.indexOf(p)>=0){toast('该目录已在列表中，未重复添加','warn');return}t.push(p);setTaskList(t);setDirty(true);toast('已添加目录 '+p,'success')}
 function guardEmptyTasks(){var empty=taskList().length===0;el('noTaskBanner').classList.toggle('hidden',!empty);el('scanBtn').disabled=empty;el('cleanBtn').disabled=empty;}
 
-/* ---------- directory browser ---------- */
-var browsePath='/';
-function renderCrumbs(path){
+/* ---------- directory picker (modal) ---------- */
+var dirPick={path:'/',open:false};
+function openDirPicker(){
+  dirPick.path='/';
+  var root=el('modalRoot');root.style.display='block';root.innerHTML='';
+  var mask=document.createElement('div');mask.className='modal-mask';
+  var box=document.createElement('div');box.className='modal wide';box.setAttribute('role','dialog');box.setAttribute('aria-modal','true');
+  box.innerHTML='<div class="modal-title">浏览目录并添加</div>'
+    +'<div class="crumbs" id="dpCrumbs"></div>'
+    +'<div class="dirpick" id="dpList"><div class="list-empty">加载中…</div></div>'
+    +'<div class="modal-actions"><button type="button" class="btn btn-ok" id="dpAddCur">＋ 添加当前路径</button><button type="button" class="btn btn-primary" id="dpAddSel">＋ 添加选中 (0)</button><button type="button" class="btn btn-ghost" id="dpClose">关闭</button></div>';
+  mask.appendChild(box);root.appendChild(mask);
+  function close(){dirPick.open=false;root.style.display='none';root.innerHTML='';document.removeEventListener('keydown',onKey)}
+  function onKey(e){if(e.key==='Escape')close()}
+  mask.addEventListener('click',function(e){if(e.target===mask)close()});
+  el('dpClose').addEventListener('click',close);
+  document.addEventListener('keydown',onKey);
+  el('dpCrumbs').addEventListener('click',function(e){var c=e.target.closest('.c');if(c)dpList(c.dataset.p)});
+  el('dpList').addEventListener('click',function(e){
+    var en=e.target.closest('[data-enter]');if(en){dpList(en.dataset.enter);return}
+    var ad=e.target.closest('[data-add]');if(ad){addTask(ad.dataset.add);dpList();return}
+  });
+  el('dpList').addEventListener('change',function(e){if(e.target.classList&&e.target.classList.contains('dirchk'))dpUpdateSel()});
+  el('dpAddCur').addEventListener('click',function(){addTask(dirPick.path);dpList()});
+  el('dpAddSel').addEventListener('click',function(){var sel=document.querySelectorAll('#dpList .dirchk:checked');if(!sel.length){toast('请先勾选要加入的子目录','warn');return}sel.forEach(function(c){addTask(c.dataset.path)});dpList()});
+  dirPick.open=true;
+  dpList('/');
+}
+function dpCrumbs(path){
   path=path||'/';
   var parts=path.split('/').filter(Boolean);
   var h='<span class="c" data-p="/">根目录</span>';
@@ -647,31 +660,25 @@ function renderCrumbs(path){
   for(var i=0;i<parts.length;i++){acc+='/'+parts[i];h+='<span class="sep">›</span>';
     if(i===parts.length-1)h+='<span class="cur">'+esc(parts[i])+'</span>';
     else h+='<span class="c" data-p="'+esc(acc)+'">'+esc(parts[i])+'</span>';}
-  el('crumbs').innerHTML=h;
+  el('dpCrumbs').innerHTML=h;
 }
-el('crumbs').addEventListener('click',function(e){var c=e.target.closest('.c');if(c){listDir(c.dataset.p)}});
-function listDir(p){
-  var path=p||val('browsePath')||'/';
-  setv('browsePath',path);renderCrumbs(path);
+function dpUpdateSel(){var n=document.querySelectorAll('#dpList .dirchk:checked').length;el('dpAddSel').textContent='＋ 添加选中 ('+n+')';el('dpAddSel').disabled=n===0}
+function dpList(p){
+  var path=p||dirPick.path||'/';
+  dirPick.path=path;dpCrumbs(path);
+  el('dpList').innerHTML='<div class="list-empty">加载中…</div>';
   return api('/api/list?path='+encodeURIComponent(path)+'&_='+Date.now()).then(function(j){
     if(j.token){lastToken=j.token;renderPerms(j.token);setConn('ok',j.token)}
     var rows=[];
     var cur=taskList();
     for(var i=0;i<j.dirs.length;i++){var d=j.dirs[i];var added=cur.indexOf(d.path)>=0;
       rows.push('<div class="diritem"><input type="checkbox" class="dirchk" data-path="'+esc(d.path)+'" '+(added?'disabled':'')+'>'
-        +'<span class="name" data-enter="'+esc(d.path)+'">'+esc(d.displayPath)+'</span>'
+        +'<span class="name" data-enter="'+esc(d.path)+'">'+esc(d.name)+'</span>'
         +(added?'<span class="added">✓ 已添加</span>':'<button class="mini" data-add="'+esc(d.path)+'">＋ 加入</button>')+'</div>');}
-    el('dirPanel').innerHTML=rows.length?rows.join(''):'<div class="list-empty"><span class="ico">📂</span><span class="t">此目录下没有子文件夹</span><div>可手动修改上方路径后点「加载」</div></div>';
-    updateAddAll();
-  }).catch(function(e){toast(e.message,'error');el('dirPanel').innerHTML='<div class="list-empty"><span class="t danger-text">'+esc(e.message)+'</span></div>'});
+    el('dpList').innerHTML=rows.length?rows.join(''):'<div class="list-empty"><span class="ico">📂</span><span class="t">此目录下没有子文件夹</span><div>可点上方「＋ 添加当前路径」直接把当前目录加入</div></div>';
+    dpUpdateSel();
+  }).catch(function(e){toast(e.message,'error');el('dpList').innerHTML='<div class="list-empty"><span class="t danger-text">'+esc(e.message)+'</span></div>'});
 }
-el('dirPanel').addEventListener('click',function(e){
-  var en=e.target.closest('[data-enter]');if(en){listDir(en.dataset.enter);return}
-  var ad=e.target.closest('[data-add]');if(ad){addTask(ad.dataset.add);listDir();return}
-});
-el('dirPanel').addEventListener('change',function(e){if(e.target.classList&&e.target.classList.contains('dirchk'))updateAddAll()});
-function updateAddAll(){var n=document.querySelectorAll('.dirchk:checked').length;el('addAllBtn').textContent='加入选中 ('+n+')';el('addAllBtn').disabled=n===0}
-function addAllTasks(){var sel=document.querySelectorAll('.dirchk:checked');if(!sel.length){toast('请先勾选要加入的子目录','warn');return}sel.forEach(function(c){addTask(c.dataset.path)});listDir()}
 
 /* ---------- config in/out ---------- */
 function fillConfig(c){
@@ -912,10 +919,8 @@ el('testBtn').addEventListener('click',testConn);
 el('toggleToken').addEventListener('click',function(){var t=el('token');if(t.type==='password'){t.type='text';el('toggleToken').textContent='隐藏'}else{t.type='password';el('toggleToken').textContent='显示'}});
 el('scanBtn').addEventListener('click',function(){doScan(false)});
 el('cleanBtn').addEventListener('click',function(){doScan(true)});
-el('recRefreshRun').addEventListener('click',function(){loadRecords().then(function(){switchTab('logs');showLogsPane('records')}).catch(function(e){toast(e.message,'error')})});
-el('listBtn').addEventListener('click',function(){listDir()});
-el('addCurrentBtn').addEventListener('click',function(){addTask(val('browsePath')||'/')});
-el('addAllBtn').addEventListener('click',addAllTasks);
+el('recRefreshRun').addEventListener('click',function(){loadRecords().then(function(){switchTab('logs')}).catch(function(e){toast(e.message,'error')})});
+el('openDirPick').addEventListener('click',openDirPicker);
 el('clearTasksBtn').addEventListener('click',function(){
   if(taskList().length===0){toast('列表已为空','warn');return}
   confirmDialog({title:'确认清空目录列表？',body:'将移除全部 '+taskList().length+' 个清理目录；不会删除任何网盘文件，但自动清理将无目录可扫。',okText:'清空列表'}).then(function(ok){if(ok){setTaskList([]);setDirty(true);toast('已清空目录列表','success')}});
@@ -930,20 +935,25 @@ el('clearLogsBtn').addEventListener('click',function(){
   confirmDialog({title:'确认清空运行日志？',body:'将删除全部运行日志；此操作不可恢复（清理记录不受影响）。',okText:'清空日志'}).then(function(ok){if(ok)api('/api/clear_logs',{method:'POST'}).then(function(){return loadLogs()}).then(function(){toast('日志已清空','success')}).catch(function(e){toast(e.message,'error')})});
 });
 el('guideToggle').addEventListener('click',function(){var v=el('guideCard').dataset.collapsed!=='1';applyGuideCollapsed(v);try{localStorage.setItem('nds_guideCollapsed',v?'1':'0')}catch(e){}});
-function showLogsPane(which){
-  el('paneRecords').classList.toggle('hidden',which!=='records');
-  el('paneLogs').classList.toggle('hidden',which!=='logs');
-  document.querySelectorAll('#tab-logs .chip[data-logs]').forEach(function(x){x.classList.toggle('active',x.dataset.logs===which)});
-}
-document.querySelectorAll('#tab-logs .chip[data-logs]').forEach(function(c){c.addEventListener('click',function(){showLogsPane(c.dataset.logs)})});
 // dirty listeners
 ['address','token','adExts','videoExts','sizeLimit','opsPerSec','cooldown','excludeDirs','pushDebounce','incompleteSuffixes','maxFilesPerRun','maxTotalBytes','burst','maxDepth','forceRefresh','offlineOnly','deletePermanently','allowDelete','enablePush'].forEach(function(id){
   var e=el(id);if(!e)return;e.addEventListener('input',function(){setDirty(true)});e.addEventListener('change',function(){setDirty(true)});
 });
 // 勾选/取消「事件驱动实时清理」时同步常驻推送权限告警显隐。
 el('enablePush').addEventListener('change',renderPushWarn);
-el('browsePath').addEventListener('keydown',function(e){if(e.key==='Enter')listDir()});
 window.addEventListener('beforeunload',function(e){if(dirty){e.preventDefault();e.returnValue=''}});
+
+/* ---------- last scan (自动呈现最近结果) ---------- */
+function loadLastScan(){
+  return api('/api/last_scan?_='+Date.now()).then(function(j){
+    if(!j||!j.result)return;
+    lastScan=j.result;
+    renderStats(j.result);
+    renderResult(j.result.items||[]);
+    renderOffline(j.result.offlineTasks||[]);
+    renderErrors(j.result.errors||[]);
+  }).catch(function(){});
+}
 
 /* ---------- init ---------- */
 function load(){
@@ -956,10 +966,12 @@ function load(){
     updateNextAction();
   });
 }
-showLogsPane('records');
 switchTab('run');
 load().catch(function(e){toast(e.message,'error')});
 loadRecords().catch(function(){});
 loadLogs().catch(function(){});
+loadLastScan();
+// 轻量轮询：事件驱动后台触发扫描时，页面自动呈现最新结果（不扫全树，仅拉取内存快照）。
+setInterval(loadLastScan,15000);
 </script>
 </body></html>`
