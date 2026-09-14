@@ -292,6 +292,14 @@ func runScan(ctx context.Context, deleteMode bool) (*ScanResult, error) {
 // startPushConsumer 常驻运行事件驱动实时清理。连接失败会记日志并每 10s 重试，
 // 绝不 panic / log.Fatal。权限不足时记为不可用并退出（不影响手动扫描）。
 func startPushConsumer(ctx context.Context) {
+	// 配置缺失（地址/Token 为空）是永久性错误，不是临时网络故障：
+	// 不进入重连循环，否则会每 10s 刷一条「连接失败」噪声日志。
+	// 打一条明确提示即返回；配置补全后需重启生效。
+	c := currentConfig()
+	if normalizeAddress(c.Address) == "" || strings.TrimSpace(c.Token) == "" {
+		appendLog("事件驱动实时清理未启动：CD2 地址或 Token 未配置（配置后需重启生效）")
+		return
+	}
 	for {
 		if ctx.Err() != nil {
 			return
