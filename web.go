@@ -90,7 +90,6 @@ section.tabpane.active{display:grid;gap:var(--s4);align-content:start}
 .btn-sm{padding:5px 10px;font-size:13px}
 .actions{display:flex;gap:var(--s2);flex-wrap:wrap;margin-top:var(--s3)}
 .spinner{width:14px;height:14px;border-radius:999px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;animation:spin .7s linear infinite;display:inline-block}
-.spinner.dark{border-color:rgba(255,255,255,.15);border-top-color:var(--blue)}
 @keyframes spin{to{transform:rotate(360deg)}}
 
 /* ---------- forms ---------- */
