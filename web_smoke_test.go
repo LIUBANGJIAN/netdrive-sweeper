@@ -81,6 +81,8 @@ func TestHandleSave_PreservesConfigVersion(t *testing.T) {
 		cfg = oldCfg
 		stateMu.Unlock()
 	}()
+	// 等 handleSave 的「保存后自检」goroutine 收敛，避免其在 logPath 恢复后污染真实日志（LIFO：先于上面恢复执行）。
+	defer selfCheckWG.Wait()
 
 	// 前端不发送 config_version（它不在表单里），合并解码必须保留现值。
 	req := httptest.NewRequest("POST", "/api/save", strings.NewReader(`{"address":"127.0.0.1:19798","token":"tok","tasks":["/电影"]}`))

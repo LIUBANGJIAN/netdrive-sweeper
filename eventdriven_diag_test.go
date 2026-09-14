@@ -224,8 +224,8 @@ func TestDiag_SupervisorReason_FirstPatrolAlwaysLogs(t *testing.T) {
 	if !strings.Contains(line, "事件驱动未启动") {
 		t.Fatalf("诊断行应含「事件驱动未启动」，实际 %q", line)
 	}
-	if last != pushDisabledReason(c) {
-		t.Fatalf("应把当前原因写入 lastReason，实际 %q", last)
+	if last != pushDisabledReasonKey(c) {
+		t.Fatalf("应把当前状态签名写入 lastReason，实际 %q", last)
 	}
 }
 
@@ -272,6 +272,87 @@ func TestDiag_DisableLogLine_NoPlainToken(t *testing.T) {
 	}
 	if tokenPresence("") != "无" || tokenPresence("   ") != "无" || tokenPresence("x") != "有" {
 		t.Fatal("tokenPresence 有/无判定错误")
+	}
+}
+
+// b5: 四种「未启动原因」文本必须两两互不相同，使日志能唯一区分失败模式。
+func TestDiag_DisabledReasonsFourDistinct(t *testing.T) {
+	reasons := map[string]string{
+		"未启用":           pushDisabledReason(Config{EnablePush: false, Address: "1.2.3.4:19798", Token: "x"}),
+		"地址缺失":          pushDisabledReason(Config{EnablePush: true, Address: "", Token: "x"}),
+		"Token 缺失":      pushDisabledReason(Config{EnablePush: true, Address: "1.2.3.4:19798", Token: ""}),
+		"地址与 Token 皆缺失": pushDisabledReason(Config{EnablePush: true, Address: "", Token: ""}),
+	}
+	seen := map[string]string{}
+	for name, r := range reasons {
+		if r == "" {
+			t.Fatalf("%s 的原因文本不应为空", name)
+		}
+		if prev, dup := seen[r]; dup {
+			t.Fatalf("原因文本重复：「%s」与「%s」都是 %q（无法区分失败模式）", name, prev, r)
+		}
+		seen[r] = name
+	}
+	// 抽查关键文案，避免退化成含糊的通用句。
+	if !strings.Contains(reasons["未启用"], "已关闭") {
+		t.Fatalf("未启用原因应含「已关闭」，实际 %q", reasons["未启用"])
+	}
+	if !strings.Contains(reasons["地址缺失"], "地址未配置") || strings.Contains(reasons["地址缺失"], "Token") {
+		t.Fatalf("地址缺失原因应为「地址未配置」且不提 Token，实际 %q", reasons["地址缺失"])
+	}
+	if !strings.Contains(reasons["Token 缺失"], "Token 未配置") || strings.Contains(reasons["Token 缺失"], "地址") {
+		t.Fatalf("Token 缺失原因应为「Token 未配置」且不提地址，实际 %q", reasons["Token 缺失"])
+	}
+	if !strings.Contains(reasons["地址与 Token 皆缺失"], "均未配置") {
+		t.Fatalf("两者皆缺失原因应含「均未配置」，实际 %q", reasons["地址与 Token 皆缺失"])
+	}
+}
+
+// b6: 关键字段发生变化时，即便原因文本相同也必须重新记日志（签名判据的核心价值）。
+// 用「已关闭」这一原因（地址/Token 可自由变化）演示「Token 无→有」被捕捉。
+func TestDiag_SupervisorReason_FieldChangeRelogs(t *testing.T) {
+	noTok := Config{EnablePush: false, Address: "1.2.3.4:19798", Token: ""}
+	hasTok := Config{EnablePush: false, Address: "1.2.3.4:19798", Token: "x"}
+	if pushDisabledReason(noTok) != pushDisabledReason(hasTok) {
+		t.Fatalf("前置条件错误：本用例要求两者原因文本相同，实际 %q vs %q",
+			pushDisabledReason(noTok), pushDisabledReason(hasTok))
+	}
+
+	line1, last := pushSupervisorLogReason(false, noTok, "")
+	if line1 == "" {
+		t.Fatal("首次未启动必须记一条")
+	}
+	// 原因文本不变、但 Token 从「无」→「有」：必须重新记（签名变化）。
+	line2, last2 := pushSupervisorLogReason(false, hasTok, last)
+	if line2 == "" {
+		t.Fatal("Token 无→有时应重新记日志（字段级变化被签名捕捉）")
+	}
+	if last2 == last {
+		t.Fatalf("字段变化后签名应更新，仍为 %q", last2)
+	}
+	// 稳定后不得再刷屏。
+	if again, _ := pushSupervisorLogReason(false, hasTok, last2); again != "" {
+		t.Fatalf("状态稳定后不应重复记日志，实际 %q", again)
+	}
+}
+
+// b7: 「地址为空 ↔ Token 为空」之间切换必须各自重记（此前共用文本导致被吞）。
+func TestDiag_SupervisorReason_AddressVsTokenSwitchRelogs(t *testing.T) {
+	addrEmpty := Config{EnablePush: true, Address: "", Token: "x"}
+	tokenEmpty := Config{EnablePush: true, Address: "1.2.3.4:19798", Token: ""}
+
+	_, last := pushSupervisorLogReason(false, addrEmpty, "")
+	line, last2 := pushSupervisorLogReason(false, tokenEmpty, last)
+	if line == "" {
+		t.Fatal("地址为空 → Token 为空切换时应重新记日志（字段变化被捕捉）")
+	}
+	if last2 == last {
+		t.Fatalf("切换后签名应更新，仍为 %q", last2)
+	}
+	// 来回切换也必须每次重记（各自对应不同签名）。
+	line3, _ := pushSupervisorLogReason(false, addrEmpty, last2)
+	if line3 == "" {
+		t.Fatal("Token 为空 → 地址为空切回时也应重新记日志")
 	}
 }
 

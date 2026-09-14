@@ -68,6 +68,12 @@ var (
 	rootCtx, rootCancel = context.WithCancel(context.Background())
 )
 
+// selfCheckWG 供测试等待 handleSave 触发的「保存后自检」异步 goroutine 结束。
+// 若不等待，该 goroutine 可能在测试清理（恢复 logPath 到 data/clean.log）之后才写日志，
+// 把「保存后自检：CD2 暂不可达…」这类测试行污染进真实日志，干扰对线上故障的判断。
+// 生产环境无人调用 Wait，等同空操作，无行为影响。
+var selfCheckWG sync.WaitGroup
+
 // RuntimeStatus 是页面顶部状态。
 type RuntimeStatus struct {
 	Running     bool       `json:"running"`
@@ -187,7 +193,11 @@ func handleSave(w http.ResponseWriter, r *http.Request) {
 	// 唤醒事件驱动监督器：地址 / Token / 开关 / 防抖任一变化都会热重启订阅，无需重启容器。
 	wakePushSupervisor()
 	// 保存后立刻自检一次连接与权限：用户改完地址/Token 无需再手点「测试连接」。
+	// selfCheckWG 让测试能等待该异步任务收敛，避免其在测试恢复 logPath 之后才写日志、
+	// 从而污染真实 data/clean.log（生产环境无人 Wait，等同空操作）。
+	selfCheckWG.Add(1)
 	go func(c Config) {
+		defer selfCheckWG.Done()
 		if _, err := probeCD2Status(rootCtx, c); err != nil {
 			appendLog("保存后自检：CD2 暂不可达（%v）", err)
 		}
@@ -521,17 +531,21 @@ func pushSupervisor(ctx context.Context) {
 }
 
 // pushSupervisorLogReason 决定本次巡检是否要写一条「事件驱动未启动」诊断行，并返回更新后的 lastReason。
-// 抽成纯函数以便单测「原因变化时才记、不刷屏」。want=true（已启动）时返回空并复位 lastReason，
+// 抽成纯函数以便单测「状态变化时才记、不刷屏」。want=true（已启动）时返回空并复位 lastReason，
 // 便于下次停止时重新记录。
+//
+// 判据不再只看 reason 文本，而是看 pushDisabledReasonKey 生成的「状态签名」：这样即便
+// 原因文本偶有重合，只要关键字段（归一化地址 / Token 有-无 / 是否启用 / 清理目录数）发生变化，
+// 也会重新记一条——例如「地址从空→有」「Token 从无→有」都能各自留下痕迹，而不会被静默吞掉。
 func pushSupervisorLogReason(want bool, c Config, lastReason string) (line, newLast string) {
 	if want {
 		return "", ""
 	}
-	reason := pushDisabledReason(c)
-	if reason == lastReason {
+	key := pushDisabledReasonKey(c)
+	if key == lastReason {
 		return "", lastReason
 	}
-	return pushDisableLogLine(c), reason
+	return pushDisableLogLine(c), key
 }
 
 // pushDisableLogLine 生成「事件驱动未启动」的完整诊断行。Token 仅打「有/无」，绝不回显明文。
@@ -615,11 +629,40 @@ func runPushConsumer(ctx context.Context, c Config) {
 }
 
 // pushDisabledReason 给出「未启动订阅」的可读原因。
+// 四档文本互不相同，使日志能唯一区分失败模式：未启用 / 地址缺失 / Token 缺失 / 两者皆缺失。
+// 注意：此前「地址缺失」与「Token 缺失」共用同一句「地址或 Token 未配置」，会导致
+// 「地址为空 ↔ Token 为空」之间切换时 reason 文本不变、日志不重记，字段变化被吞掉。
 func pushDisabledReason(c Config) string {
 	if !c.EnablePush {
 		return "未启用（已关闭「事件驱动实时清理」）"
 	}
-	return "未启用：CD2 地址或 Token 未配置"
+	addrEmpty := normalizeAddress(c.Address) == ""
+	tokenEmpty := strings.TrimSpace(c.Token) == ""
+	switch {
+	case addrEmpty && tokenEmpty:
+		return "未启用：CD2 地址与 Token 均未配置"
+	case addrEmpty:
+		return "未启用：CD2 地址未配置"
+	case tokenEmpty:
+		return "未启用：CD2 Token 未配置"
+	default:
+		// 地址与 Token 均已配置时 want=true，不会走到这里；保留可读兜底。
+		return "未启用：CD2 地址与 Token 均未配置"
+	}
+}
+
+// pushDisabledReasonKey 生成「未启动状态」的稳定签名，供 pushSupervisor 判定「是否需要重新记日志」。
+// 相比只看 reason 文本，签名把关键字段也纳入比较，从而捕捉「同类原因下的字段级变化」：
+// 归一化地址（空↔有）、Token 有/无、是否启用、清理目录数。
+// 不包含 Token 明文——只比较「有/无」，既避免泄露又不依赖其内容。
+func pushDisabledReasonKey(c Config) string {
+	return strings.Join([]string{
+		pushDisabledReason(c),
+		normalizeAddress(c.Address),
+		tokenPresence(c.Token),
+		strconv.FormatBool(c.EnablePush),
+		strconv.Itoa(len(cleanTasks(c.Tasks))),
+	}, "\x00")
 }
 
 // permSummary 把 Token 权限汇成一行中文，用于日志与自检输出。

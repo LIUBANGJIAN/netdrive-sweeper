@@ -72,6 +72,7 @@ func TestSmoke_StateEndpointReturnsEmptyTasks(t *testing.T) {
 // 请求体只带一个字段时，其余字段保留现值而非被重置为零值（同类问题见 FIX-A）。
 func TestSmoke_SaveMergeDecodePreservesFields(t *testing.T) {
 	defer withTempPaths(t)()
+	defer selfCheckWG.Wait() // 等 handleSave 的「保存后自检」goroutine 收敛，避免污染真实日志
 	if err := mustLoadConfig(); err != nil {
 		t.Fatalf("mustLoadConfig: %v", err)
 	}
@@ -119,6 +120,7 @@ func TestSmoke_SaveMergeDecodePreservesFields(t *testing.T) {
 // TestSmoke_SaveEmptyTasksPersists 验证显式清空目录后能持久化（不再回填 ["/"]）。
 func TestSmoke_SaveEmptyTasksPersists(t *testing.T) {
 	defer withTempPaths(t)()
+	defer selfCheckWG.Wait() // 等 handleSave 的「保存后自检」goroutine 收敛，避免污染真实日志
 	if err := mustLoadConfig(); err != nil {
 		t.Fatalf("mustLoadConfig: %v", err)
 	}
@@ -152,6 +154,7 @@ func TestSmoke_SaveEmptyTasksPersists(t *testing.T) {
 // TestSmoke_SavePartialThenEmptyTasks 组合：连续两次部分提交，空目录最终生效。
 func TestSmoke_SavePartialThenEmptyTasks(t *testing.T) {
 	defer withTempPaths(t)()
+	defer selfCheckWG.Wait() // 等 handleSave 的「保存后自检」goroutine 收敛，避免污染真实日志
 	if err := mustLoadConfig(); err != nil {
 		t.Fatalf("mustLoadConfig: %v", err)
 	}
@@ -185,6 +188,7 @@ func TestSmoke_SweeperRunEmptyTasksFriendlyError(t *testing.T) {
 // 它是「保存即重置」缺陷中最危险的字段（0 表示不限深，误置会放大 API 调用与风控风险）。
 func TestSmoke_SaveMergePreservesMaxDepth(t *testing.T) {
 	defer withTempPaths(t)()
+	defer selfCheckWG.Wait() // 等 handleSave 的「保存后自检」goroutine 收敛，避免污染真实日志
 	if err := mustLoadConfig(); err != nil {
 		t.Fatalf("mustLoadConfig: %v", err)
 	}

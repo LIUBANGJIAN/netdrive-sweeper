@@ -11,6 +11,8 @@ import (
 // TestMigrateConfig_LegacyCooldown 验证 v0→v1 迁移：旧默认 6h 冷却改为 0（立即清理），
 // 用户自定义值与已迁移版本一概不改。
 func TestMigrateConfig_LegacyCooldown(t *testing.T) {
+	// migrateConfig 在迁移时会经 appendLog 写日志；重定向到 t.TempDir() 以免污染 data/clean.log。
+	defer withTempPaths(t)()
 	got := migrateConfig(Config{ConfigVersion: 0, FileCooldownHours: 6})
 	if got.FileCooldownHours != 0 {
 		t.Fatalf("旧默认 6h 应迁移为 0，实际 %d", got.FileCooldownHours)
@@ -42,8 +44,8 @@ func TestPushDisabledReason(t *testing.T) {
 	if got := pushDisabledReason(Config{EnablePush: false}); !strings.Contains(got, "已关闭") {
 		t.Fatalf("关闭状态原因=%q，期望包含「已关闭」", got)
 	}
-	if got := pushDisabledReason(Config{EnablePush: true}); !strings.Contains(got, "地址或 Token") {
-		t.Fatalf("缺配置原因=%q，期望包含「地址或 Token」", got)
+	if got := pushDisabledReason(Config{EnablePush: true}); !strings.Contains(got, "均未配置") {
+		t.Fatalf("缺配置原因=%q，期望包含「均未配置」", got)
 	}
 }
 
@@ -93,6 +95,8 @@ func TestPushTypeName(t *testing.T) {
 // TestPushSupervisor_DisabledConfigStops 验证未启用时监督器不启动订阅，
 // 并把状态置为 config_missing（这是「改配置无需重启容器」的状态机入口）。
 func TestPushSupervisor_DisabledConfigStops(t *testing.T) {
+	// 监督器会经 appendLog 写日志；重定向到 t.TempDir() 以免污染 data/clean.log。
+	defer withTempPaths(t)()
 	stateMu.Lock()
 	old := cfg
 	cfg.EnablePush = false
@@ -145,6 +149,9 @@ func TestPushConsumer_NoteTypeDedup(t *testing.T) {
 // 「启动时配置为空 → 直接退出 → 之后改配置也不再重启」。
 // 这里把地址指向保留端口 127.0.0.1:1（必然拒连），进入 error 重试态即证明 goroutine 已启动。
 func TestPushSupervisor_StartsConsumerWhenConfigured(t *testing.T) {
+	// 订阅 goroutine 会经 appendLog 记录连接失败（含 dial tcp 127.0.0.1:1）；
+	// 重定向到 t.TempDir() 以免污染 data/clean.log（曾干扰对真实故障的判断）。
+	defer withTempPaths(t)()
 	stateMu.Lock()
 	old := cfg
 	cfg.EnablePush = true
