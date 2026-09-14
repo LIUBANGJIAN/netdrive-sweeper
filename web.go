@@ -117,12 +117,6 @@ details.adv .adv-body{padding:0 12px 12px}
 .pushtag{font-weight:600}
 .pushbox{margin-top:var(--s3)}
 
-/* ---------- stat grid ---------- */
-.statgrid{display:grid;grid-template-columns:1fr 1fr;gap:var(--s2)}
-.stat{display:flex;justify-content:space-between;padding:10px 12px;background:var(--bg);border-radius:var(--r-md)}
-.stat .label{color:var(--muted);font-size:12px}
-.stat .value{font-weight:600}
-
 /* ---------- lists ---------- */
 .panel{max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:var(--r-md);background:var(--bg)}
 .panel::-webkit-scrollbar{width:6px;height:6px}.panel::-webkit-scrollbar-thumb{background:var(--line);border-radius:999px}
@@ -148,34 +142,13 @@ details.adv .adv-body{padding:0 12px 12px}
 .crumbs .cur{color:var(--text);font-weight:600}
 .crumbs .sep{color:var(--muted)}
 
-/* ---------- table ---------- */
-.tablewrap{border:1px solid var(--line);border-radius:var(--r-md);overflow:auto;background:var(--bg)}
-table.tbl{width:100%;border-collapse:collapse;font-size:13px}
-table.tbl th{position:sticky;top:0;background:var(--card);color:var(--muted);font-size:12px;font-weight:500;text-align:left;padding:9px 10px;cursor:default;white-space:nowrap;border-bottom:1px solid var(--line)}
-table.tbl th.sortable{cursor:pointer}
-table.tbl td{padding:7px 10px;border-bottom:1px solid #1c2128;color:var(--text-dim);vertical-align:middle}
-table.tbl tr:nth-child(even) td{background:rgba(255,255,255,.02)}
-table.tbl tr:hover td{background:var(--card)}
-table.tbl .path{max-width:1px;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-table.tbl .r{text-align:right}
-table.tbl .mark{width:44px;text-align:center}
-.markbtn{cursor:pointer;font-size:15px;line-height:1;user-select:none}
-.markbtn.on{color:var(--success-text)}
-.markbtn.off{color:var(--muted)}
+/* ---------- log toolbar / chips ---------- */
 .tblbar{display:flex;gap:var(--s2);flex-wrap:wrap;align-items:center;margin-bottom:var(--s2)}
 .tblbar input[type=text],.tblbar select{background:var(--bg);border:1px solid var(--line);color:var(--text);border-radius:var(--r-md);padding:7px 9px;font-size:12px;height:34px}
 .tblbar input[type=text]{flex:1;min-width:140px}
-.pager{display:flex;gap:var(--s2);align-items:center;justify-content:flex-end;margin-top:var(--s2);font-size:12px;color:var(--muted);flex-wrap:wrap}
 .chips{display:flex;gap:4px;flex-wrap:wrap}
 .chip{border:1px solid var(--line);background:var(--bg);color:var(--muted);border-radius:999px;font-size:11px;padding:3px 9px;cursor:pointer}
 .chip.active{background:var(--card);color:var(--text);border-color:var(--blue)}
-
-/* ---------- records ---------- */
-.recitem{display:flex;align-items:center;gap:var(--s2);padding:8px 10px;border-bottom:1px solid #1c2128;font-size:11px;color:var(--text-dim)}
-.recitem:last-child{border-bottom:0}
-.recitem .t{color:var(--muted);flex-shrink:0}
-.recitem .p{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.tag{padding:1px 6px;border-radius:4px;font-size:10px;flex-shrink:0}
 
 /* ---------- logs ---------- */
 .logbox{max-height:240px;overflow:auto;padding:12px;background:var(--log-bg);border-radius:var(--r-md);border:1px solid var(--line);font-size:12px;color:var(--muted);white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace}
@@ -192,10 +165,6 @@ table.tbl .mark{width:44px;text-align:center}
 .banner-warn{background:var(--warning-bg);border-color:var(--warning);color:var(--warning-text)}
 .banner-danger{background:var(--bad-bg);border-color:var(--danger);color:var(--danger-text)}
 .banner-info{background:rgba(88,166,255,.08);border-color:var(--info);color:var(--blue)}
-.empty{text-align:center;padding:var(--s5) 12px;color:var(--muted)}
-.empty .ico{font-size:32px;display:block;margin-bottom:var(--s2)}
-.empty .t{color:var(--text-dim);font-size:14px;margin-bottom:4px}
-.empty .t.ok{color:var(--ok-text)}
 .skel{display:inline-block;min-width:44px;height:12px;border-radius:4px;background:linear-gradient(90deg,var(--card),#2b313a,var(--card));background-size:200% 100%;animation:sk 1.2s linear infinite;vertical-align:middle}
 @keyframes sk{0%{background-position:200% 0}100%{background-position:-200% 0}}
 
@@ -228,11 +197,9 @@ table.tbl .mark{width:44px;text-align:center}
 @media(max-width:767px){
  .main{padding:12px}.topbar{padding:8px 12px}
  .row2,.row3{grid-template-columns:1fr}
- .statgrid{grid-template-columns:1fr 1fr}
  .btn{min-height:44px}
  .tab{padding:12px 10px}
- .mini,.chip,table.tbl th.sortable{min-height:44px}
- .mini,.chip{display:inline-flex;align-items:center}
+ .mini,.chip{min-height:44px;display:inline-flex;align-items:center}
  .tb-meta.suggest{display:none}
  #toastRoot{left:12px;right:12px;bottom:12px;align-items:stretch}
  .modal-mask{align-items:flex-end;padding:0}
