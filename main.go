@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -35,6 +37,29 @@ var (
 	lastScanAt time.Time
 )
 
+// PushRuntime 描述事件驱动订阅（PushMessage）的实时状态，供页面直接展示。
+// 有了它，用户不必再靠猜：配置一保存就会热启动/热重启订阅，页面立刻能看到
+// 「运行中 / 未启用 / 权限不足 / 连接失败重试中」。这是修复「改配置后必须重启容器、
+// 否则事件驱动静默失效且毫无解释」的关键——把隐性约束变成显式状态。
+type PushRuntime struct {
+	State     string `json:"state"`     // off|config_missing|connecting|running|denied|error
+	Detail    string `json:"detail"`    // 人类可读说明
+	Since     string `json:"since"`     // 进入该状态的时间
+	Events    int    `json:"events"`    // 已收到的文件系统变更事件数
+	LastEvent string `json:"lastEvent"` // 最近一次文件系统变更事件时间
+}
+
+var (
+	pushMu   sync.Mutex
+	pushStop context.CancelFunc // 当前订阅的取消函数；nil 表示没有在跑
+	pushSig  string             // 当前订阅启动时对应的配置指纹
+	pushWake = make(chan struct{}, 1)
+	pushStat = PushRuntime{State: "off", Detail: "未启用"}
+	// pushRev 每次保存配置 +1，使订阅指纹必然变化 → 触发热重启。
+	// 这样「在 CD2 里给 Token 补上 allow_push_message 后回页面保存」即可生效，无需重启容器。
+	pushRev atomic.Int64
+)
+
 // 应用级根上下文：用于常驻的 PushMessage 事件驱动订阅，随进程生命周期存续。
 var (
 	rootCtx, rootCancel = context.WithCancel(context.Background())
@@ -53,9 +78,8 @@ func main() {
 		appendLog("配置加载警告: %v", err)
 	}
 	// 事件驱动实时清理（P0-27）：常驻订阅 CD2 PushMessage，是替代定时轮询的唯一合法实时感知方式。
-	if currentConfig().EnablePush {
-		go startPushConsumer(rootCtx)
-	}
+	// 由 pushSupervisor 统一管理：配置一旦保存即热启动 / 热重启，无需重启容器。
+	go pushSupervisor(rootCtx)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleIndex)
 	mux.HandleFunc("/api/state", handleState)
@@ -68,6 +92,7 @@ func main() {
 	mux.HandleFunc("/api/logs", handleLogs)
 	mux.HandleFunc("/api/clear_logs", handleClearLogs)
 	mux.HandleFunc("/api/last_scan", handleLastScan)
+	mux.HandleFunc("/api/push", handlePush)
 
 	log.Printf("%s 启动，监听 %s，配置文件: %s", appName, listenAddr, configPath)
 	if err := http.ListenAndServe(listenAddr, mux); err != nil {
@@ -106,6 +131,9 @@ func formatError(format string, args ...any) error {
 // ---------- handlers ----------
 
 func handleIndex(w http.ResponseWriter, r *http.Request) {
+	// 页面是内联单文件（HTML+CSS+JS 一体），必须禁缓存，否则修好的前端逻辑会被旧副本掩盖。
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
 	_ = pageTpl.Execute(w, map[string]any{"Title": appName})
 }
 
@@ -113,8 +141,9 @@ func handleState(w http.ResponseWriter, r *http.Request) {
 	stateMu.Lock()
 	c := cfg
 	s := statusInfo
+	at := lastScanAt
 	stateMu.Unlock()
-	writeJSON(w, map[string]any{"config": c, "status": s})
+	writeJSON(w, map[string]any{"config": c, "status": s, "push": pushSnapshot(), "lastScanAt": at})
 }
 
 func handleSave(w http.ResponseWriter, r *http.Request) {
@@ -139,6 +168,8 @@ func handleSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	appendLog("配置已保存（限速 %.1f ops/s，删除方式 %s）", next.OpsPerSec, map[bool]string{true: "永久", false: "回收站"}[next.DeletePermanently])
+	// 唤醒事件驱动监督器：地址 / Token / 开关 / 防抖任一变化都会热重启订阅，无需重启容器。
+	wakePushSupervisor()
 	writeJSON(w, map[string]any{"ok": true, "config": next})
 }
 
@@ -245,6 +276,14 @@ func handleLastScan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true, "result": res, "at": at})
 }
 
+// handlePush 返回事件驱动订阅的实时状态（纯内存读取，供前端轻量轮询）。
+func handlePush(w http.ResponseWriter, r *http.Request) {
+	stateMu.Lock()
+	at := lastScanAt
+	stateMu.Unlock()
+	writeJSON(w, map[string]any{"ok": true, "push": pushSnapshot(), "lastScanAt": at})
+}
+
 func handleClearLogs(w http.ResponseWriter, r *http.Request) {
 	ensureDataDirs()
 	_ = os.WriteFile(logPath, nil, 0644)
@@ -311,23 +350,114 @@ func runScan(ctx context.Context, deleteMode bool) (*ScanResult, error) {
 	return res, err
 }
 
-// startPushConsumer 常驻运行事件驱动实时清理。连接失败会记日志并每 10s 重试，
-// 绝不 panic / log.Fatal。权限不足时记为不可用并退出（不影响手动扫描）。
-func startPushConsumer(ctx context.Context) {
-	// 配置缺失（地址/Token 为空）是永久性错误，不是临时网络故障：
-	// 不进入重连循环，否则会每 10s 刷一条「连接失败」噪声日志。
-	// 打一条明确提示即返回；配置补全后需重启生效。
-	c := currentConfig()
-	if normalizeAddress(c.Address) == "" || strings.TrimSpace(c.Token) == "" {
-		appendLog("事件驱动实时清理未启动：CD2 地址或 Token 未配置（配置后需重启生效）")
-		return
+// ---------- 事件驱动实时清理：监督器 + 订阅 ----------
+
+// pushSnapshot 返回一份推送运行时状态快照（供 /api/state 输出）。
+func pushSnapshot() PushRuntime {
+	pushMu.Lock()
+	defer pushMu.Unlock()
+	return pushStat
+}
+
+// setPushState 更新推送运行时状态（自持锁）。注意：不要在本函数内再取 pushMu 之外的锁后回调，
+// 也不要在持有 pushMu 时调用（否则死锁），持有锁时用 setPushStateLocked。
+func setPushState(state, detail string) {
+	pushMu.Lock()
+	setPushStateLocked(state, detail)
+	pushMu.Unlock()
+}
+
+func setPushStateLocked(state, detail string) {
+	pushStat.State = state
+	pushStat.Detail = detail
+	pushStat.Since = time.Now().Format("2006-01-02 15:04:05")
+}
+
+// bumpPushEvent 记录一次文件系统变更事件。
+func bumpPushEvent() {
+	pushMu.Lock()
+	pushStat.Events++
+	pushStat.LastEvent = time.Now().Format("2006-01-02 15:04:05")
+	pushMu.Unlock()
+}
+
+// wakePushSupervisor 非阻塞唤醒监督器，使其按最新配置热重启订阅。
+func wakePushSupervisor() {
+	pushRev.Add(1)
+	select {
+	case pushWake <- struct{}{}:
+	default:
 	}
+}
+
+// pushConfigSignature 返回影响订阅的配置指纹。含 revision，因此每次「保存配置」都会
+// 触发一次热重启——这正是想要的语义：保存即生效，不必重启容器。
+func pushConfigSignature(c Config) string {
+	return normalizeAddress(c.Address) + "\x00" + strings.TrimSpace(c.Token) + "\x00" +
+		strconv.FormatBool(c.EnablePush) + "\x00" + strconv.Itoa(c.PushDebounceSeconds) + "\x00" +
+		strconv.FormatInt(pushRev.Load(), 10)
+}
+
+// pushSupervisor 常驻，按当前配置按需启动 / 停止 / 重启 PushMessage 订阅。
+// 触发时机：进程启动 + 每次保存配置（唤醒） + 20s 兜底巡检。
+// 它只读内存配置、不做任何网络轮询，因此与「禁止定时扫全树」的风控约束不冲突。
+func pushSupervisor(ctx context.Context) {
+	for {
+		c := currentConfig()
+		want := c.EnablePush && normalizeAddress(c.Address) != "" && strings.TrimSpace(c.Token) != ""
+		sig := pushConfigSignature(c)
+
+		pushMu.Lock()
+		running := pushStop != nil
+		if running && (!want || pushSig != sig) {
+			pushStop()
+			pushStop = nil
+			pushSig = ""
+			running = false
+			if !want {
+				setPushStateLocked("config_missing", pushDisabledReason(c))
+			} else {
+				setPushStateLocked("off", "正在按新配置重启订阅…")
+			}
+		}
+		if want && !running {
+			cctx, cancel := context.WithCancel(ctx)
+			pushStop = cancel
+			pushSig = sig
+			go runPushConsumer(cctx, c)
+		} else if !want {
+			// 仅在状态变化时写入，避免 20s 巡检反复刷新 Since。
+			reason := pushDisabledReason(c)
+			if pushStat.State != "config_missing" || pushStat.Detail != reason {
+				setPushStateLocked("config_missing", reason)
+			}
+		}
+		pushMu.Unlock()
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-pushWake:
+		case <-time.After(20 * time.Second):
+		}
+	}
+}
+
+// runPushConsumer 常驻运行事件驱动实时清理，直到 ctx 取消。
+// 连接失败记日志并每 10s 重试；权限不足记日志并返回（由监督器在下次保存配置后重启）。
+func runPushConsumer(ctx context.Context, c Config) {
+	setPushState("connecting", "正在连接 CD2…")
+	debounce := time.Duration(c.PushDebounceSeconds) * time.Second
 	for {
 		if ctx.Err() != nil {
 			return
 		}
-		client, token, err := connectPushClient(ctx)
+		client, token, err := connectPushClient(ctx, c)
 		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			setPushState("error", "连接失败："+formatCD2Error(err).Error()+"（10s 后重试）")
 			appendLog("事件驱动实时清理连接失败：%v（10s 后重试）", err)
 			if !waitOrDone(ctx, 10*time.Second) {
 				return
@@ -336,10 +466,11 @@ func startPushConsumer(ctx context.Context) {
 		}
 		if !token.AllowPushMessage {
 			client.Close()
-			appendLog("未授予 allow_push_message 权限，事件驱动实时清理不可用（不影响手动扫描）")
+			setPushState("denied", "Token 缺少 allow_push_message 权限，事件驱动不生效")
+			appendLog("Token 缺少 allow_push_message 权限，事件驱动实时清理不可用（不影响手动扫描）。" +
+				"在 CD2 为该 Token 勾选该权限后回本页「保存配置」即可生效，无需重启容器")
 			return
 		}
-		debounce := time.Duration(currentConfig().PushDebounceSeconds) * time.Second
 		p := newPushConsumer(client, debounce, func() {
 			appendLog("收到文件系统变更事件，防抖后触发扫描")
 			// runScan 自带 scanBusy 互斥，进行中会返回「已有扫描任务」错误。
@@ -350,17 +481,27 @@ func startPushConsumer(ctx context.Context) {
 			}
 			appendLog("事件触发扫描完成 checked=%d matched=%d deleted=%d", res.Checked, res.Matched, res.Deleted)
 		})
-		appendLog("事件驱动实时清理已启动（PushMessage，防抖 %ds）", currentConfig().PushDebounceSeconds)
+		setPushState("running", fmt.Sprintf("运行中（PushMessage 已订阅，防抖 %ds）", c.PushDebounceSeconds))
+		appendLog("事件驱动实时清理已启动（PushMessage，防抖 %ds）", c.PushDebounceSeconds)
 		p.run(ctx) // 常驻订阅；内部自带重连退避，ctx 取消时返回
 		client.Close()
+		setPushState("off", "订阅已结束")
 		return
 	}
 }
 
+// pushDisabledReason 给出「未启动订阅」的可读原因。
+func pushDisabledReason(c Config) string {
+	if !c.EnablePush {
+		return "未启用（已关闭「事件驱动实时清理」）"
+	}
+	return "未启用：CD2 地址或 Token 未配置"
+}
+
 // connectPushClient 建立并校验一次 PushMessage 订阅所需的连接（TCP 探测 + Token 校验）。
 // 失败时已关闭 client，返回的 client 为 nil。
-func connectPushClient(ctx context.Context) (*CD2Client, *TokenInfo, error) {
-	client, err := newCD2Client(currentConfig())
+func connectPushClient(ctx context.Context, c Config) (*CD2Client, *TokenInfo, error) {
+	client, err := newCD2Client(c)
 	if err != nil {
 		return nil, nil, err
 	}

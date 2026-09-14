@@ -10,6 +10,8 @@ import (
 
 // Config 是单实例的内存配置 + 持久化契约。
 type Config struct {
+	// ConfigVersion 用于一次性配置迁移（0 = 历史版本，见 migrateConfig）。
+	ConfigVersion       int      `json:"config_version"`
 	Address             string   `json:"address"`
 	Token               string   `json:"token"`
 	AdExts              string   `json:"ad_exts"`
@@ -32,8 +34,28 @@ type Config struct {
 	Tasks               []string `json:"tasks"`
 }
 
+// currentConfigVersion 是当前配置结构版本。新增需要迁移的语义变更时 +1，并在 migrateConfig 里补一段。
+const currentConfigVersion = 1
+
+// migrateConfig 对历史配置做一次性、幂等的迁移（由 ConfigVersion 控制）。
+// v0→v1：旧的 file_cooldown_hours 默认值为 6，会让「刚完成的离线下载」在 6 小时内
+// 不被清理——与新默认（0 = 立即清理）及用户意图不符。若该值仍是旧默认 6，则迁移为 0；
+// 用户显式设置的其他值一概不动。
+func migrateConfig(c Config) Config {
+	if c.ConfigVersion >= currentConfigVersion {
+		return c
+	}
+	if c.FileCooldownHours == 6 {
+		c.FileCooldownHours = 0
+		appendLog("配置迁移 v0→v1：文件冷却 6 小时 → 0（立即清理）；如需保留冷却请在页面「文件冷却小时」改回")
+	}
+	c.ConfigVersion = currentConfigVersion
+	return c
+}
+
 func defaultConfig() Config {
 	return Config{
+		ConfigVersion:       currentConfigVersion,
 		Address:             "127.0.0.1:19798",
 		AdExts:              ".txt,.html,.url,.lnk",
 		VideoExts:           ".mp4,.mkv,.ts",
@@ -122,6 +144,13 @@ func mustLoadConfig() error {
 			return fmt.Errorf("配置文件解析失败，已重置为默认配置: %w", err)
 		}
 		cfg = normalizeConfig(loaded)
+		// 一次性迁移：把历史默认值（如 6h 冷却）对齐到新语义，并落盘。
+		if cfg.ConfigVersion < currentConfigVersion {
+			cfg = migrateConfig(cfg)
+			if err := saveConfigLocked(); err != nil {
+				return fmt.Errorf("配置迁移后保存失败: %w", err)
+			}
+		}
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("配置文件读取失败: %w", err)
 	} else {

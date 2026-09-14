@@ -5,3 +5,5 @@ data/
 *.exe
 .DS_Store
 tmp_*.json
+tmp_*
+ui_dump.html

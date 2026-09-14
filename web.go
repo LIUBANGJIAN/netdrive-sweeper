@@ -113,18 +113,9 @@ details.adv > summary:before{content:"▸ ";color:var(--muted)}
 details.adv[open] > summary:before{content:"▾ "}
 details.adv .adv-body{padding:0 12px 12px}
 
-/* ---------- guide / stepper ---------- */
-.guide-head{display:flex;align-items:center;gap:8px;margin-bottom:12px}
-.guide-head .spacer{flex:1}
-.guide-toggle{color:var(--blue);cursor:pointer;font-size:12px}
-.stepper{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:var(--s3)}
-.stepdot{display:flex;flex-direction:column;align-items:center;gap:4px;min-width:74px}
-.stepdot .num{width:28px;height:28px;border-radius:999px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;background:var(--card);color:var(--muted)}
-.stepdot.cur .num{background:var(--info-bg);color:#fff}
-.stepdot.done .num{background:var(--success-bg);color:#fff}
-.stepdot .lbl{font-size:11px;color:var(--muted);text-align:center}
-.stepdot.cur .lbl{color:var(--text)}
-.stepline{flex:1;height:2px;background:var(--line);min-width:10px}
+/* ---------- push state ---------- */
+.pushtag{font-weight:600}
+.pushbox{margin-top:var(--s3)}
 
 /* ---------- stat grid ---------- */
 .statgrid{display:grid;grid-template-columns:1fr 1fr;gap:var(--s2)}
@@ -266,26 +257,25 @@ table.tbl .mark{width:44px;text-align:center}
     <div class="tb-row">
       <span class="tb-meta">Token 根目录: <span id="tokenRoot">-</span></span>
       <span class="tb-meta" id="runState">空闲</span>
+      <span class="tb-meta">事件驱动: <span class="pushtag" id="pushState">-</span></span>
       <div class="tb-spacer"></div>
       <span class="tb-meta suggest" id="nextAction"></span>
     </div>
     <div class="progress" id="progress"></div>
   </div>
   <nav class="tabs" id="tabs">
-    <button class="tab" data-tab="conn">① 连接与目录<span class="badge count hidden" id="tabConnCount"></span></button>
-    <button class="tab" data-tab="rules">② 清理规则<span class="dotmini hidden" id="tabRulesDot"></span></button>
-    <button class="tab active" data-tab="run">③ 执行与结果</button>
-    <button class="tab" data-tab="logs">④ 记录与日志</button>
+    <button class="tab" data-tab="config">① 连接 · 目录 · 规则<span class="dotmini hidden" id="tabRulesDot"></span><span class="badge count hidden" id="tabConnCount"></span></button>
+    <button class="tab active" data-tab="run">② 扫描清理 · 记录</button>
   </nav>
 </div>
 
 <main class="main">
-  <!-- ① 连接与目录 -->
-  <section class="tabpane" id="tab-conn">
+  <!-- ① 连接 · 目录 · 规则（合并原「连接与目录」「清理规则」两页） -->
+  <section class="tabpane" id="tab-config">
     <div class="grid2">
       <div class="col">
         <div class="card">
-          <h2>① 连接与目录 · CD2 连接</h2>
+          <h2>CD2 连接</h2>
           <div class="row2">
             <div class="formgroup"><label>gRPC 地址</label><input id="address" placeholder="127.0.0.1:19798"><div class="help">CD2 的 gRPC 端口，默认 127.0.0.1:19798</div></div>
             <div class="formgroup"><label>API Token</label>
@@ -295,7 +285,6 @@ table.tbl .mark{width:44px;text-align:center}
           </div>
           <div class="actions">
             <button class="btn btn-ok" id="testBtn">测试连接</button>
-            <button class="btn btn-primary" id="saveBtn2">保存配置</button>
           </div>
           <div class="help" style="margin-top:8px">测试连接会先保存当前配置（如有未保存修改会先询问）。</div>
         </div>
@@ -309,20 +298,17 @@ table.tbl .mark{width:44px;text-align:center}
         </div>
       </div>
     </div>
-  </section>
 
-  <!-- ② 清理规则 -->
-  <section class="tabpane" id="tab-rules">
     <div class="card">
-      <h2>② 清理规则</h2>
+      <h2>清理规则</h2>
       <div class="row2">
         <div class="formgroup"><label>广告后缀</label><input id="adExts" value=".txt,.html,.url,.lnk"><div class="help">命中即判为垃圾（逗号分隔）</div></div>
         <div class="formgroup"><label>视频后缀</label><input id="videoExts" value=".mp4,.mkv,.ts"><div class="help">配合下方阈值按体积判定</div></div>
         <div class="formgroup"><label>小视频阈值 MB</label><input id="sizeLimit" type="number" step="0.1" value="20"><div class="help">视频后缀且体积 ≤ 此值即命中。默认 20 MB</div></div>
         <div class="formgroup"><label>限速 ops/秒</label><input id="opsPerSec" type="number" step="0.1" value="5"><div class="help warn">每次 gRPC 调用前取令牌。默认 5，对齐 115 官方上限，调高会增加风控风险</div></div>
-        <div class="formgroup"><label>文件冷却小时</label><input id="cooldown" type="number" value="0"><div class="help">设为 0 = 立即清理（发现即删）；设置 >0 则新文件在该冷却期内跳过。默认 0</div></div>
+        <div class="formgroup"><label>文件冷却小时</label><input id="cooldown" type="number" value="0"><div class="help">0 = 立即清理（发现即删，推荐）；&gt;0 则新文件（含刚完成的离线下载）在冷却期内跳过。默认 0</div></div>
         <div class="formgroup"><label>排除关键词</label><input id="excludeDirs" value="重要,备份"><div class="help">目录名包含任一关键词即整目录跳过。重要目录务必填入</div></div>
-        <div class="formgroup"><label>推送防抖秒数</label><input id="pushDebounce" type="number" value="5"><div class="help">事件驱动下合并突发变更的静默窗口。默认 5 秒（修改后需重启生效）</div></div>
+        <div class="formgroup"><label>推送防抖秒数</label><input id="pushDebounce" type="number" value="5"><div class="help">事件驱动下合并突发变更的静默窗口。默认 5 秒（保存配置后即时生效）</div></div>
         <div class="formgroup"><label>未完成后缀</label><input id="incompleteSuffixes" value=".part,.download,.!qB,.bc!,.aria2,.crdownload,.td,.tmp,.!ut"><div class="help">含这些后缀的目录整目录跳过。留空会自动回填默认值，不建议清空</div></div>
       </div>
       <div class="checks">
@@ -330,9 +316,9 @@ table.tbl .mark{width:44px;text-align:center}
         <label class="check"><input id="offlineOnly" type="checkbox" checked>只清理已完成离线任务</label>
         <label class="check"><input id="deletePermanently" type="checkbox">永久删除（不进回收站）</label>
         <label class="check warn"><input id="allowDelete" type="checkbox">允许自动清理（删除总开关）</label>
-        <label class="check"><input id="enablePush" type="checkbox" checked>启用事件驱动实时清理（PushMessage，修改后需重启容器生效）</label>
-        <div class="help warn hidden" id="pushWarn">当前 Token 缺少 allow_push_message，事件驱动实时清理不会生效。请在 CD2 中为该 Token 勾选该权限。</div>
+        <label class="check"><input id="enablePush" type="checkbox" checked>启用事件驱动实时清理（PushMessage）</label>
       </div>
+      <div class="pushbox" id="pushHint"></div>
       <details class="adv" id="advBox">
         <summary>高级（保险丝与限速）</summary>
         <div class="adv-body">
@@ -346,18 +332,19 @@ table.tbl .mark{width:44px;text-align:center}
         </div>
       </details>
     </div>
+
+    <div class="card">
+      <h2>保存配置</h2>
+      <div class="sub">修改连接、目录或规则后点下方按钮保存。保存后事件驱动订阅会按新配置自动重启，无需重启容器。</div>
+      <div class="actions"><button class="btn btn-primary" id="saveBtn2">保存配置</button></div>
+    </div>
   </section>
 
-  <!-- ③ 执行与结果 -->
+  <!-- ② 扫描清理 · 记录（合并原「执行与结果」「记录与日志」两页） -->
   <section class="tabpane active" id="tab-run">
-    <div class="card" id="guideCard">
-      <div class="guide-head"><h2 style="margin:0">首次配置引导</h2><span class="spacer"></span><span class="guide-toggle" id="guideToggle">收起</span></div>
-      <div class="stepper" id="stepper"></div>
-      <div class="sub" id="guideHint"></div>
-    </div>
     <div class="card">
-      <h2>③ 执行与结果</h2>
-      <div class="banner banner-warn hidden" id="noTaskBanner">尚未配置任何清理目录，无法扫描。请到「① 连接与目录」添加目录。</div>
+      <h2>扫描清理</h2>
+      <div class="banner banner-warn hidden" id="noTaskBanner">尚未配置任何清理目录，无法扫描。请到「① 连接 · 目录 · 规则」添加目录。</div>
       <div class="statgrid">
         <div class="stat"><span class="label">检查文件</span><span class="value" id="statChecked"><span class="skel"></span></span></div>
         <div class="stat"><span class="label">命中垃圾</span><span class="value" id="statMatched"><span class="skel"></span></span></div>
@@ -365,13 +352,13 @@ table.tbl .mark{width:44px;text-align:center}
         <div class="stat"><span class="label">跳过/错误</span><span class="value" id="statSkipped"><span class="skel"></span></span></div>
       </div>
       <div class="actions">
-        <button class="btn btn-primary" id="scanBtn">扫描预览</button>
-        <button class="btn btn-danger" id="cleanBtn">执行清理</button>
-        <button class="btn btn-ghost" id="recRefreshRun" style="margin-left:auto">刷新记录</button>
+        <button class="btn btn-primary" id="runBtn">扫描清理</button>
       </div>
+      <div class="help" id="runMeta" style="margin-top:8px">尚未执行</div>
     </div>
     <div class="card">
       <h2>扫描结果<span class="spacer"></span>
+        <span class="muted" id="resTime"></span>
         <button class="btn btn-ghost btn-sm" id="copyListBtn">复制命中清单</button>
         <button class="btn btn-ghost btn-sm" id="markAllBtn">全部标记已复核</button>
         <button class="btn btn-ghost btn-sm" id="unmarkAllBtn">取消标记</button>
@@ -396,17 +383,12 @@ table.tbl .mark{width:44px;text-align:center}
             <th class="sortable r" data-sort="size">大小 <span id="dir-size"></span></th>
             <th>命中原因</th>
           </tr></thead>
-          <tbody id="resultBody"><tr><td colspan="4"><div class="empty"><span class="ico">🔍</span><span class="t">还没有扫描结果</span><div>点上方「扫描预览」查看会命中哪些文件</div></div></td></tr></tbody>
+          <tbody id="resultBody"><tr><td colspan="4"><div class="empty"><span class="ico">🔍</span><span class="t">还没有扫描结果</span><div>点上方「扫描清理」查看会命中哪些文件</div></div></td></tr></tbody>
         </table>
       </div>
       <div class="pager" id="tblPager"></div>
-      <div id="offlineBox" style="margin-top:12px"></div>
       <div id="errBox" style="margin-top:8px"></div>
     </div>
-  </section>
-
-  <!-- ④ 记录与日志 -->
-  <section class="tabpane" id="tab-logs">
     <div class="grid2">
       <div class="col">
         <div class="card">
@@ -447,19 +429,17 @@ table.tbl .mark{width:44px;text-align:center}
 <div id="busy"><div class="busy-inner"><span class="spinner dark"></span><span id="busyText">运行中…</span></div></div>
 <input id="tasksHidden" type="hidden">
 <script>
-var state={},dirty=false,lastScan=null,lastToken=null,scanRun=false,savedOnce=false;
-var progress={conn:false,dir:false,rules:false,preview:false,enable:false};
+var state={},dirty=false,lastScan=null,lastScanTime='',lastToken=null,savedOnce=false;
+var lastPush={state:'off',detail:'',events:0,lastEvent:''};
 var tbl={page:1,pageSize:50,search:'',reason:'all',ext:'',bigOnly:false,sortKey:'path',sortDir:'asc',reviewed:{}};
 var logState={level:'all',search:'',follow:true,raw:''};
 var recState={result:'all',search:''};
-try{var gp=JSON.parse(localStorage.getItem('nds_progress')||'{}');for(var k in gp)progress[k]=gp[k];}catch(e){}
 
 function el(id){return document.getElementById(id)}
 function val(id){var e=el(id);return e?e.value:''}
 function setv(id,v){el(id).value=(v===undefined||v===null)?'':v}
 function checked(id){var e=el(id);return e?e.checked:false}
 function esc(s){return String(s===undefined||s===null?'':s).replace(/[&<>"']/g,function(m){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]})}
-function saveProgress(){try{localStorage.setItem('nds_progress',JSON.stringify(progress))}catch(e){}}
 
 function api(url,opt){return fetch(url,Object.assign({cache:'no-store',headers:{'Content-Type':'application/json'}},opt||{})).then(function(r){return r.json().then(function(j){if(!r.ok||j.ok===false)throw new Error(j.error||'请求失败');return j})})}
 
@@ -488,13 +468,13 @@ function startRun(btn,label){
   if(btn){btn.dataset.orig=btn.textContent;btn.disabled=true;btn.innerHTML='<span class="spinner"></span>'+esc(label)}
   el('busy').style.display='flex';el('progress').classList.add('on');
   runStart=Date.now();tickRun();runTimer=setInterval(tickRun,1000);
-  el('scanBtn').disabled=true;el('cleanBtn').disabled=true;
+  el('runBtn').disabled=true;
 }
 function endRun(){
   if(runTimer){clearInterval(runTimer);runTimer=null}
   el('busy').style.display='none';el('progress').classList.remove('on');el('runState').textContent='空闲';
-  ['scanBtn','cleanBtn'].forEach(function(id){var b=el(id);b.disabled=false});
-  ['scanBtn','cleanBtn'].forEach(function(id){var b=el(id);if(b.dataset.orig){b.textContent=b.dataset.orig;delete b.dataset.orig}});
+  var b=el('runBtn');b.disabled=false;if(b.dataset.orig){b.textContent=b.dataset.orig;delete b.dataset.orig}
+  guardEmptyTasks();
 }
 
 /* ---------- modal ---------- */
@@ -539,26 +519,45 @@ function setConn(state,info,msg){
 var PERM=[['list','allowList','allow_list'],['delete','allowDelete','allow_delete'],['perm_delete','allowDeletePermanently','allow_delete_permanently'],['push_message','allowPushMessage','allow_push_message']];
 function renderPerms(info){
   var box=el('permBadges');
-  if(!info){box.innerHTML='<span class="badge neutral">权限未读取</span>';renderPushWarn();return}
+  if(info&&info.rootDir)el('tokenRoot').textContent=info.rootDir;
+  if(!info){box.innerHTML='<span class="badge neutral">权限未读取</span>';return}
   box.innerHTML=PERM.map(function(p){
     var has=!!info[p[1]];
     var tip=has?'':('缺少 '+p[2]+' → '+({'list':'无法读取目录','delete':'无法删除到回收站','perm_delete':'无法永久删除','push_message':'事件驱动实时清理不会生效'}[p[0]]));
     return '<span class="badge '+(has?'ok':'bad')+'" title="'+esc(tip)+'">'+p[0]+'</span>';
   }).join('');
-  renderPushWarn();
 }
-// 常驻可见的推送权限告警：勾了「事件驱动实时清理」但 Token 无 allow_push_message 时提示。
-// 修复 §0.3 #7 痛点——此前只在徽章 title 挂悬浮提示，移动端/不悬浮完全看不到，导致静默失效无解释。
-function renderPushWarn(){
-  var show=checked('enablePush')&&lastToken&&!lastToken.allowPushMessage;
-  el('pushWarn').classList.toggle('hidden',!show);
+// 事件驱动状态：不再由前端「猜」权限，而是直接展示后端的真实订阅状态（问题 1 的根因修复）。
+// 此前用 lastToken.allowPushMessage 在前端推断并常驻告警，token 状态稍一陈旧就会误报
+// 「缺少 allow_push_message」，甚至与徽章显示自相矛盾。现在唯一可信来源是后端。
+var PUSH_LABEL={off:'已停止',config_missing:'未启用',connecting:'连接中…',running:'运行中',denied:'权限不足',error:'连接失败'};
+var PUSH_COLOR={off:'var(--muted)',config_missing:'var(--warning-text)',connecting:'var(--warning-text)',running:'var(--success-text)',denied:'var(--danger-text)',error:'var(--danger-text)'};
+function renderPush(p){
+  if(p)lastPush=p;
+  var tag=el('pushState');
+  tag.textContent=PUSH_LABEL[lastPush.state]||lastPush.state||'-';
+  tag.style.color=PUSH_COLOR[lastPush.state]||'var(--muted)';
+  tag.title=lastPush.detail||'';
+  var st=lastPush.state,html='';
+  if(st==='running'){
+    html='<div class="banner banner-info">事件驱动实时清理<b>运行中</b>：'+esc(lastPush.detail||'')+'；已收到 '+(lastPush.events||0)+' 个文件变更事件'+(lastPush.lastEvent?('，最近 '+esc(lastPush.lastEvent)):'')+'。</div>';
+  }else if(st==='denied'){
+    html='<div class="banner banner-danger">事件驱动实时清理<b>未生效</b>：'+esc(lastPush.detail||'')+'。请在 CD2 为该 Token 勾选 allow_push_message，然后回本页点「保存配置」（无需重启容器）。</div>';
+  }else if(st==='error'){
+    html='<div class="banner banner-warn">事件驱动实时清理异常：'+esc(lastPush.detail||'')+'。</div>';
+  }else if(st==='config_missing'){
+    html='<div class="banner banner-warn">事件驱动实时清理未启动：'+esc(lastPush.detail||'')+'。保存配置后会自动启动，无需重启容器。</div>';
+  }else if(st==='connecting'){
+    html='<div class="banner banner-warn">事件驱动实时清理正在连接 CD2…</div>';
+  }
+  el('pushHint').innerHTML=html;
 }
 function updateNextAction(){
   var a='';
-  if(!progress.conn)a='建议：先到「① 连接与目录」测试连接';
+  if(!lastToken)a='建议：先到「① 连接 · 目录 · 规则」测试连接';
   else if(taskList().length<1)a='建议：添加至少 1 个清理目录';
-  else if(!lastScan)a='建议：用「扫描预览」确认命中结果后再启用自动清理';
-  else if(!checked('allowDelete'))a='建议：确认无误后勾选「允许自动清理」以启用删除';
+  else if(!lastScan)a='建议：点「扫描清理」确认命中结果';
+  else if(!checked('allowDelete'))a='当前为预览模式：勾选「允许自动清理」后才会真正删除';
   else a='一切就绪，正在按规则运行';
   el('nextAction').textContent=a;
 }
@@ -571,36 +570,9 @@ function switchTab(name){
 }
 el('tabs').addEventListener('click',function(e){var b=e.target.closest('.tab');if(b)switchTab(b.dataset.tab)});
 
-/* ---------- guide ---------- */
-function applyGuideCollapsed(v){
-  var b=el('guideCard');b.dataset.collapsed=v?'1':'0';
-  el('stepper').classList.toggle('hidden',!!v);
-  el('guideHint').classList.toggle('hidden',!!v);
-  el('guideToggle').textContent=v?'展开':'收起';
-}
-function renderGuide(){
-  var steps=[['连接','测试连接'],['目录','添加目录'],['规则','确认规则'],['预览','扫描预览'],['启用','允许自动清理']];
-  var done=[progress.conn,taskList().length>0,progress.rules,progress.preview,progress.enable];
-  var cur=done.indexOf(false);if(cur<0)cur=steps.length;
-  var h='';
-  for(var i=0;i<steps.length;i++){
-    if(i>0)h+='<span class="stepline"></span>';
-    var cls=i<cur?'done':(i===cur?'cur':'');
-    var num=i<cur?'✓':String(i+1);
-    h+='<div class="stepdot '+cls+'"><div class="num">'+num+'</div><div class="lbl">'+esc(steps[i][0])+'</div></div>';
-  }
-  el('stepper').innerHTML=h;
-  var doneAll=cur>=steps.length;
-  el('guideHint').textContent=doneAll?'首次配置已完成 ✓ 如需重新查看，点「收起/展开」切换。':('下一步：'+steps[cur][1]+'。');
-  if(doneAll){
-    var gs;try{gs=localStorage.getItem('nds_guideCollapsed')}catch(e){gs=null}
-    applyGuideCollapsed(gs===null?true:(gs==='1'));
-  }
-}
-
 /* ---------- tasks ---------- */
 function taskList(){var v=val('tasksHidden');if(!v)return[];return v.split('\n').map(function(x){return x.trim()}).filter(Boolean)}
-function setTaskList(list){setv('tasksHidden',list.join('\n'));renderTaskList(list);renderGuide();updateNextAction();guardEmptyTasks()}
+function setTaskList(list){setv('tasksHidden',list.join('\n'));renderTaskList(list);updateNextAction();guardEmptyTasks()}
 function renderTaskList(list){
   el('taskCount').textContent=list.length;
   el('tabConnCount').textContent=list.length;
@@ -622,7 +594,7 @@ function taskListAction(act,i){
 }
 el('taskList').addEventListener('click',function(e){var b=e.target.closest('.mini');if(b)taskListAction(b.dataset.act,parseInt(b.dataset.i,10))});
 function addTask(p){var t=taskList();if(t.indexOf(p)>=0){toast('该目录已在列表中，未重复添加','warn');return}t.push(p);setTaskList(t);setDirty(true);toast('已添加目录 '+p,'success')}
-function guardEmptyTasks(){var empty=taskList().length===0;el('noTaskBanner').classList.toggle('hidden',!empty);el('scanBtn').disabled=empty;el('cleanBtn').disabled=empty;}
+function guardEmptyTasks(){var empty=taskList().length===0;el('noTaskBanner').classList.toggle('hidden',!empty);el('runBtn').disabled=empty;}
 
 /* ---------- directory picker (modal) ---------- */
 var dirPick={path:'/',open:false};
@@ -693,7 +665,7 @@ function fillConfig(c){
   el('allowDelete').checked=!!c.allow_delete;
   el('enablePush').checked=c.enable_push!==false;
   setTaskList(c.tasks&&c.tasks.length?c.tasks:[]);
-  setDirty(false);renderGuide();updateNextAction();renderPushWarn();
+  setDirty(false);updateNextAction();
 }
 function gatherCfg(){
   return {
@@ -713,8 +685,11 @@ function saveCfg(btn){
   if(btn){btn.dataset.orig=btn.textContent;btn.disabled=true;btn.textContent='保存中…'}
   return api('/api/save',{method:'POST',body:JSON.stringify(gatherCfg())}).then(function(j){
     if(j.config)fillConfig(j.config);
-    savedOnce=true;progress.rules=true;saveProgress();renderGuide();
-    setDirty(false);toast('配置已保存','success');return j;
+    savedOnce=true;
+    setDirty(false);toast('配置已保存','success');
+    // 保存会触发后端热重启事件驱动订阅；稍后刷新状态，让「运行中/权限不足」立刻可见。
+    setTimeout(function(){loadPush().catch(function(){})},600);
+    return j;
   }).finally(function(){if(btn){btn.disabled=false;if(btn.dataset.orig){btn.textContent=btn.dataset.orig;delete btn.dataset.orig}}});
 }
 
@@ -727,7 +702,7 @@ function testConn(){
     var pre=dirty?saveCfg():Promise.resolve();
     pre.then(function(){return api('/api/test?_='+Date.now())}).then(function(j){
       lastToken=j.token;renderPerms(j.token);setConn('ok',j.token);
-      progress.conn=true;saveProgress();renderGuide();updateNextAction();
+      updateNextAction();
       toast(j.message,'success');
     }).catch(function(e){setConn('fail',null,e.message);toast(e.message,'error')}).finally(function(){
       // §9.9 ③：测试期间按钮 disabled + 「测试中…」，成功/失败都要恢复。
@@ -750,39 +725,65 @@ function reasonOf(item){
   return 'video';
 }
 function splitLower(s){return String(s||'').split(',').map(function(x){return x.trim().toLowerCase()}).filter(Boolean)}
-function doScan(doDelete){
-  if(taskList().length===0){toast('请先添加清理目录','error');switchTab('conn');return}
-  if(doDelete&&!checked('allowDelete')){toast('请先勾选「允许自动清理」','error');switchTab('rules');return}
-  var proceed=function(){
-    var btn=doDelete?el('cleanBtn'):el('scanBtn');
-    startRun(btn,doDelete?'清理中…':'扫描中…');
-    api(doDelete?'/api/clean':'/api/scan').then(function(j){
-      lastScan=j;renderStats(j);renderResult(j.items||[]);renderOffline(j.offlineTasks||[]);renderErrors(j.errors||[]);
-      if(!doDelete){progress.preview=true;saveProgress()}
-      if(doDelete)progress.enable=checked('allowDelete');saveProgress();renderGuide();updateNextAction();
-      toast(doDelete?('清理完成：删除 '+j.deleted+' 个'):('扫描完成：命中 '+j.matched+' 个'),'success');
-      if(doDelete)loadRecords().catch(function(){});
-    }).catch(function(e){toast(e.message,'error');renderErrors([e.message])}).finally(function(){endRun()});
-  };
-  if(!doDelete){proceed();return}
-  var it=(lastScan&&lastScan.items)||[];
-  var sizeSum=it.reduce(function(a,x){return a+(x.size||0)},0);
+/* ---------- 扫描清理（合并原「扫描预览」与「执行清理」为单一动作）---------- */
+function validTime(v){
+  if(!v)return null;
+  var d=(v instanceof Date)?v:new Date(v);
+  // 后端零值时间会被序列化成 0001-01-01T00:00:00Z，必须挡掉，否则页面显示「公元 1 年」。
+  if(isNaN(d.getTime())||d.getFullYear()<2000)return null;
+  return d;
+}
+function fmtTime(v){
+  var d=validTime(v);
+  if(!d)return '';
+  function p(n){return (n<10?'0':'')+n}
+  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+}
+function renderRunMeta(){
+  var when=lastScanTime?('最近一次：'+fmtTime(lastScanTime)):'尚未执行';
+  var mode='';
+  if(lastScan&&lastScan.deleteMode){
+    mode=lastScan.deleteMode==='permanent'?'永久删除':(lastScan.deleteMode==='recycle'?'回收站删除':'仅预览（未删除）');
+  }
+  var txt=when+(mode?(' · '+mode):'');
+  if(!checked('allowDelete'))txt+=' · 当前未开启「允许自动清理」，只扫不删';
+  el('runMeta').textContent=txt;
+  el('resTime').textContent=lastScanTime?('更新于 '+fmtTime(lastScanTime)):'';
+}
+function doRun(){
+  if(taskList().length===0){toast('请先添加清理目录','error');switchTab('config');return}
+  // 未开启删除总开关 → 只做扫描预览，不弹删除确认（避免「说要删却什么都没删」的困惑）。
+  if(!checked('allowDelete')){executeRun(false);return}
   var permanent=checked('deletePermanently');
-  var body='';
-  if(!lastScan)body+='<div class="banner banner-warn">尚未「扫描预览」，确认后将按当前规则当场扫描并删除。</div>';
-  body+='<ul class="modal-list">'
-    +'<li>将删除 <b>'+(lastScan?(lastScan.matched||0):'（扫描后确定）')+'</b> 个文件，合计 <b>'+formatSize(sizeSum)+'</b></li>'
+  var body='<ul class="modal-list">'
+    +'<li>将按当前规则扫描并 <b>删除</b> 命中的垃圾文件</li>'
     +'<li>删除方式：'+(permanent?'<b class="danger-text">永久删除，不进回收站，不可恢复</b>':'进网盘回收站（可恢复）')+'</li>'
     +'<li>涉及 '+taskList().length+' 个目录</li>'
-    +'<li>本轮跳过 '+(lastScan?(lastScan.skipped||0):0)+' 个（冷却期/未完成目录）</li></ul>';
+    +'<li>单轮上限 '+esc(val('maxFilesPerRun'))+' 个 / '+esc(val('maxTotalBytes'))+' GiB</li></ul>'
+    +'<div class="banner banner-warn">扫描与删除在同一轮完成：点「确认」后立即按规则删除，不再有二次确认。</div>';
   if(permanent)body+='<div class="banner banner-danger">永久删除不可恢复，请谨慎确认。</div>';
-  confirmDialog({title:permanent?'确认永久删除？':'确认执行清理？',bodyHtml:body,okText:permanent?'永久删除':'确认清理',confirmWord:permanent?'DELETE':null}).then(function(ok){if(ok)proceed()});
+  confirmDialog({title:permanent?'确认扫描并永久删除？':'确认扫描并清理？',bodyHtml:body,okText:permanent?'永久删除':'扫描并清理',confirmWord:permanent?'DELETE':null}).then(function(ok){if(ok)executeRun(true)});
 }
-function renderOffline(list){
-  if(!list.length){el('offlineBox').innerHTML='';return}
-  var h='<div class="sub" style="margin:0 0 6px">离线任务状态</div><table class="tbl"><thead><tr><th>目录</th><th>状态</th></tr></thead><tbody>';
-  list.forEach(function(o){h+='<tr><td class="path mono" title="'+esc(o.path)+'">'+esc(o.path)+'</td><td>'+(o.ready?'<span style="color:var(--success-text)">'+esc(o.status)+'</span>':'<span style="color:var(--warning-text)">'+esc(o.status)+'</span>')+'</td></tr>'});
-  el('offlineBox').innerHTML=h+'</tbody></table>';
+function executeRun(doDelete){
+  var go=function(){
+    var btn=el('runBtn');
+    startRun(btn,doDelete?'清理中…':'扫描中…');
+    api(doDelete?'/api/clean':'/api/scan').then(function(j){
+      lastScan=j;lastScanTime=new Date();
+      renderStats(j);renderResult(j.items||[]);renderErrors(j.errors||[]);renderRunMeta();
+      toast(doDelete?('清理完成：删除 '+j.deleted+' 个'):('扫描完成：命中 '+j.matched+' 个'+(checked('allowDelete')?'':'（预览模式，未删除）')),'success');
+      if(doDelete)loadRecords().catch(function(){});
+      loadLogs().catch(function(){});
+    }).catch(function(e){toast(e.message,'error');renderErrors([e.message])}).finally(function(){endRun()});
+  };
+  // 未保存的修改不会被本次扫描采用（扫描读的是后端已保存的配置），先保存再执行。
+  if(dirty){
+    confirmDialog({title:'执行前需保存配置',body:'检测到未保存的修改，扫描只会按「已保存」的配置执行。是否先保存再执行？',okText:'保存并执行'}).then(function(ok){
+      if(ok)saveCfg().then(go).catch(function(e){toast(e.message,'error')});
+    });
+    return;
+  }
+  go();
 }
 function renderErrors(list){el('errBox').innerHTML=list.length?('<div class="banner banner-danger">'+list.map(esc).join('<br>')+'</div>'):''}
 
@@ -826,7 +827,7 @@ function renderResultTable(){
   var body=el('resultBody');
   if(!total){
     var all=(lastScan&&lastScan.items)||[];
-    body.innerHTML='<tr><td colspan="4"><div class="empty"><span class="ico">'+(all.length?'✅':'🔍')+'</span><span class="t'+(all.length?' ok':'')+'">'+(all.length?'未发现符合条件的垃圾文件':'还没有扫描结果')+'</span><div>'+(all.length?'当前规则下目录很干净；如需更严格，可调整②清理规则':'点上方「扫描预览」查看会命中哪些文件')+'</div></div></td></tr>';
+    body.innerHTML='<tr><td colspan="4"><div class="empty"><span class="ico">'+(all.length?'✅':'🔍')+'</span><span class="t'+(all.length?' ok':'')+'">'+(all.length?'未发现符合条件的垃圾文件':'还没有扫描结果')+'</span><div>'+(all.length?'当前规则下目录很干净；如需更严格，可调整清理规则':'点上方「扫描清理」查看会命中哪些文件')+'</div></div></td></tr>';
     el('tblPager').innerHTML='';return;
   }
   body.innerHTML=page.map(function(x){
@@ -917,9 +918,7 @@ el('saveBtn').addEventListener('click',function(){saveCfg(el('saveBtn')).catch(f
 el('saveBtn2').addEventListener('click',function(){saveCfg(el('saveBtn2')).catch(function(e){toast(e.message,'error')})});
 el('testBtn').addEventListener('click',testConn);
 el('toggleToken').addEventListener('click',function(){var t=el('token');if(t.type==='password'){t.type='text';el('toggleToken').textContent='隐藏'}else{t.type='password';el('toggleToken').textContent='显示'}});
-el('scanBtn').addEventListener('click',function(){doScan(false)});
-el('cleanBtn').addEventListener('click',function(){doScan(true)});
-el('recRefreshRun').addEventListener('click',function(){loadRecords().then(function(){switchTab('logs')}).catch(function(e){toast(e.message,'error')})});
+el('runBtn').addEventListener('click',doRun);
 el('openDirPick').addEventListener('click',openDirPicker);
 el('clearTasksBtn').addEventListener('click',function(){
   if(taskList().length===0){toast('列表已为空','warn');return}
@@ -934,24 +933,30 @@ el('logCopyBtn').addEventListener('click',logCopy);
 el('clearLogsBtn').addEventListener('click',function(){
   confirmDialog({title:'确认清空运行日志？',body:'将删除全部运行日志；此操作不可恢复（清理记录不受影响）。',okText:'清空日志'}).then(function(ok){if(ok)api('/api/clear_logs',{method:'POST'}).then(function(){return loadLogs()}).then(function(){toast('日志已清空','success')}).catch(function(e){toast(e.message,'error')})});
 });
-el('guideToggle').addEventListener('click',function(){var v=el('guideCard').dataset.collapsed!=='1';applyGuideCollapsed(v);try{localStorage.setItem('nds_guideCollapsed',v?'1':'0')}catch(e){}});
 // dirty listeners
 ['address','token','adExts','videoExts','sizeLimit','opsPerSec','cooldown','excludeDirs','pushDebounce','incompleteSuffixes','maxFilesPerRun','maxTotalBytes','burst','maxDepth','forceRefresh','offlineOnly','deletePermanently','allowDelete','enablePush'].forEach(function(id){
   var e=el(id);if(!e)return;e.addEventListener('input',function(){setDirty(true)});e.addEventListener('change',function(){setDirty(true)});
 });
-// 勾选/取消「事件驱动实时清理」时同步常驻推送权限告警显隐。
-el('enablePush').addEventListener('change',renderPushWarn);
+// 勾选/取消「事件驱动实时清理」：立即刷新提示（后端订阅在保存配置后才真正启停）。
+el('enablePush').addEventListener('change',function(){renderPush()});
+// 删除总开关/永久删除变化会改变「扫描清理」的语义与提示，立即刷新。
+el('allowDelete').addEventListener('change',function(){renderRunMeta();updateNextAction()});
+el('deletePermanently').addEventListener('change',function(){renderRunMeta()});
 window.addEventListener('beforeunload',function(e){if(dirty){e.preventDefault();e.returnValue=''}});
 
-/* ---------- last scan (自动呈现最近结果) ---------- */
+/* ---------- push 状态 / 最近结果（自动呈现后台动作）---------- */
+function loadPush(){
+  return api('/api/push?_='+Date.now()).then(function(j){renderPush(j.push)});
+}
 function loadLastScan(){
   return api('/api/last_scan?_='+Date.now()).then(function(j){
     if(!j||!j.result)return;
     lastScan=j.result;
+    var t=validTime(j.at);if(t)lastScanTime=t;
     renderStats(j.result);
     renderResult(j.result.items||[]);
-    renderOffline(j.result.offlineTasks||[]);
     renderErrors(j.result.errors||[]);
+    renderRunMeta();
   }).catch(function(){});
 }
 
@@ -959,10 +964,12 @@ function loadLastScan(){
 function load(){
   return api('/api/state?_='+Date.now()).then(function(j){
     state=j;fillConfig(j.config);
+    var t=validTime(j.lastScanAt);if(t)lastScanTime=t;
+    renderPush(j.push);
     lastToken=j.status&&j.status.token?j.status.token:null;
-    if(lastToken){renderPerms(lastToken);setConn('ok',lastToken)}else{setConn('none')}
-    renderStats({checked:0,matched:0,deleted:0,skipped:0});
+    if(lastToken){renderPerms(lastToken);setConn('ok',lastToken)}else{renderPerms(null);setConn('none')}
     el('statChecked').textContent='-';el('statMatched').textContent='-';el('statDeleted').textContent='-';el('statSkipped').textContent='-';
+    renderRunMeta();
     updateNextAction();
   });
 }
@@ -971,7 +978,8 @@ load().catch(function(e){toast(e.message,'error')});
 loadRecords().catch(function(){});
 loadLogs().catch(function(){});
 loadLastScan();
-// 轻量轮询：事件驱动后台触发扫描时，页面自动呈现最新结果（不扫全树，仅拉取内存快照）。
-setInterval(loadLastScan,15000);
+// 轻量轮询：推送状态与结果快照都只读后端内存（无网络调用，不触发扫全树）。
+setInterval(function(){loadPush().catch(function(){})},5000);
+setInterval(loadLastScan,12000);
 </script>
 </body></html>`

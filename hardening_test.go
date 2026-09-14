@@ -95,27 +95,64 @@ func TestHandleClean_EmptyTasksFriendlyErrorBeforeCD2(t *testing.T) {
 
 // ---------- Gap A / Gap B: HTML/JS 静态标记回归 ----------
 
-// TestWebStaticMarkers_GapA_GapB 以源码级断言守护设计稿验收项。
-// Gap A：测试连接期间按钮 disabled + 文案「测试中…」，并在 finally 恢复；
-// Gap B：enablePush 下方常驻橙色告警 + renderPushWarn 定义与三个调用点。
-func TestWebStaticMarkers_GapA_GapB(t *testing.T) {
-	markers := map[string]string{
-		"Gap B 告警元素":            `id="pushWarn"`,
-		"Gap B 告警文案":            `当前 Token 缺少 allow_push_message，事件驱动实时清理不会生效`,
-		"Gap B 函数定义":            `function renderPushWarn()`,
-		"Gap B 可见条件(推送权限)":      `checked('enablePush')&&lastToken&&!lastToken.allowPushMessage`,
-		"Gap B 调用点 renderPerms": `renderPushWarn();`, // renderPerms 末尾
-		"Gap B 调用点 change":      `el('enablePush').addEventListener('change',renderPushWarn)`,
-		"Gap A 禁用并记录原文案":        `btn.dataset.orig=btn.textContent;btn.disabled=true;btn.textContent='测试中…'`,
-		"Gap A finally 恢复":      `btn.disabled=false;if(btn.dataset.orig){btn.textContent=btn.dataset.orig;delete btn.dataset.orig}`,
+// TestWebStaticMarkers_PushStatusSingleSourceOfTruth 守护「事件驱动状态以后端为唯一可信来源」
+// 这一修复不变量（对应问题 1）。
+// 历史做法：前端用缓存的 lastToken.allowPushMessage 自行推断并常驻告警——token 状态一陈旧
+// 就误报「缺少 allow_push_message」，甚至与徽章显示自相矛盾。
+// 新做法：后端 /api/push 输出真实订阅状态（running/denied/config_missing/error），前端只呈现。
+func TestWebStaticMarkers_PushStatusSingleSourceOfTruth(t *testing.T) {
+	mustContain := map[string]string{
+		"顶部推送状态元素": `id="pushState"`,
+		"规则区提示容器":  `id="pushHint"`,
+		"renderPush 定义": `function renderPush(p){`,
+		"数据来自后端":    `renderPush(j.push)`,
+		"轮询推送状态接口":  `/api/push?_=`,
+		"Gap A 禁用并记录原文案": `btn.dataset.orig=btn.textContent;btn.disabled=true;btn.textContent='测试中…'`,
+		"Gap A finally 恢复": `btn.disabled=false;if(btn.dataset.orig){btn.textContent=btn.dataset.orig;delete btn.dataset.orig}`,
 	}
-	for name, m := range markers {
+	for name, m := range mustContain {
 		if !strings.Contains(pageHTML, m) {
 			t.Fatalf("%s：pageHTML 缺少标记 %q", name, m)
 		}
 	}
-	// fillConfig 末尾也必须调用 renderPushWarn（首个加载即生效）。
-	if !strings.Contains(pageHTML, `setDirty(false);renderGuide();updateNextAction();renderPushWarn();`) {
-		t.Fatal("Gap B 调用点 fillConfig：缺少 renderPushWarn() 调用")
+	// 反回归：不得再用前端缓存的 token 权限去判定推送告警（问题 1 的根因）。
+	if strings.Contains(pageHTML, "!lastToken.allowPushMessage") {
+		t.Fatal("前端不得再以前端 token 缓存的 allowPushMessage 判定推送告警；应改由后端 /api/push 提供真实状态")
+	}
+}
+
+// TestWebStaticMarkers_ConsolidatedUI 守护 UI 合并与精简（对应问题 2 / 3 / 4）：
+// 两页式（① 配置 / ② 扫描清理·记录）、单一「扫描清理」动作、结果与记录日志同页、
+// 无首次配置引导、无离线任务状态表。
+func TestWebStaticMarkers_ConsolidatedUI(t *testing.T) {
+	mustContain := []string{
+		`data-tab="config"`,
+		`data-tab="run"`,
+		`id="runBtn"`,
+		`function doRun(){`,
+		`id="runMeta"`,
+		`id="resTime"`,
+		`id="saveBtn2"`,
+	}
+	for _, m := range mustContain {
+		if !strings.Contains(pageHTML, m) {
+			t.Fatalf("pageHTML 缺少标记 %q", m)
+		}
+	}
+	mustNotContain := map[string]string{
+		"首次配置引导卡": `id="guideCard"`,
+		"引导步进器":   `id="stepper"`,
+		"离线任务状态表": `id="offlineBox"`,
+		"离线任务渲染":  `function renderOffline(`,
+		"旧扫描预览按钮": `id="scanBtn"`,
+		"旧执行清理按钮": `id="cleanBtn"`,
+		"旧页签-连接":  `data-tab="conn"`,
+		"旧页签-规则":  `data-tab="rules"`,
+		"旧页签-日志":  `data-tab="logs"`,
+	}
+	for name, m := range mustNotContain {
+		if strings.Contains(pageHTML, m) {
+			t.Fatalf("%s：pageHTML 不应再包含 %q", name, m)
+		}
 	}
 }

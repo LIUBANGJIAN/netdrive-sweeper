@@ -29,6 +29,9 @@ type pushConsumer struct {
 
 	mu    sync.Mutex  // 保护 timer
 	timer *time.Timer // 当前待触发的防抖定时器
+
+	tmu  sync.Mutex     // 保护 seen
+	seen map[int32]bool // 已见过的消息类型（用于首次诊断日志，避免重复刷屏）
 }
 
 // newPushConsumer 构造一个 pushConsumer。debounce <= 0 时回退到 5 秒。
@@ -41,15 +44,57 @@ func newPushConsumer(client *CD2Client, debounce time.Duration, trigger func()) 
 		debounce: debounce,
 		trigger:  trigger,
 		log:      appendLog,
+		seen:     map[int32]bool{},
+	}
+}
+
+// pushTypeName 返回消息类型的中文名，仅用于日志诊断。
+func pushTypeName(t int32) string {
+	switch t {
+	case 0:
+		return "DOWNLOADER_COUNT"
+	case 1:
+		return "UPLOADER_COUNT"
+	case 2:
+		return "UPDATE_STATUS"
+	case 3:
+		return "FORCE_EXIT"
+	case 4:
+		return "FILE_SYSTEM_CHANGE"
+	case 5:
+		return "MOUNT_POINT_CHANGE"
+	case 6:
+		return "COPY_TASK_COUNT"
+	case 7:
+		return "LOG_MESSAGE"
+	case 8:
+		return "MERGE_TASKS"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// noteType 记录「某消息类型首次到达」，只打一次日志。
+// 目的：离线下载完成时若 CD2 未按预期发 FILE_SYSTEM_CHANGE=4，日志能立刻暴露真实的
+// 类型值，便于把订阅范围对齐到实际事件，而不是继续盲猜。
+func (p *pushConsumer) noteType(t int32) {
+	p.tmu.Lock()
+	first := !p.seen[t]
+	p.seen[t] = true
+	p.tmu.Unlock()
+	if first && p.log != nil {
+		p.log("PushMessage 事件到达 messageType=%d(%s)", t, pushTypeName(t))
 	}
 }
 
 // handle 处理单条推送消息：仅当为文件系统变更时刷新防抖定时器。
 // 并发安全：多路事件到来时用互斥保护 timer。非 FSC 事件直接忽略。
 func (p *pushConsumer) handle(messageType int32) {
+	p.noteType(messageType)
 	if !isFileSystemChange(messageType) {
 		return
 	}
+	bumpPushEvent()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.timer != nil {
