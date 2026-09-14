@@ -139,3 +139,48 @@ func TestPushConsumer_NoteTypeDedup(t *testing.T) {
 		t.Fatalf("去重后应只记 2 条（类型 2、4 各一次），实际 %d 条：%v", len(logs), logs)
 	}
 }
+
+// TestPushSupervisor_StartsConsumerWhenConfigured 是问题 0 的核心回归：
+// 配置具备后监督器必须真的把订阅拉起来并在失败时进入重试态，而不是像旧实现那样
+// 「启动时配置为空 → 直接退出 → 之后改配置也不再重启」。
+// 这里把地址指向保留端口 127.0.0.1:1（必然拒连），进入 error 重试态即证明 goroutine 已启动。
+func TestPushSupervisor_StartsConsumerWhenConfigured(t *testing.T) {
+	stateMu.Lock()
+	old := cfg
+	cfg.EnablePush = true
+	cfg.Address = "127.0.0.1:1"
+	cfg.Token = "tok"
+	stateMu.Unlock()
+	defer func() {
+		stateMu.Lock()
+		cfg = old
+		stateMu.Unlock()
+		pushMu.Lock()
+		if pushStop != nil {
+			pushStop()
+			pushStop = nil
+		}
+		pushMu.Unlock()
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { pushSupervisor(ctx); close(done) }()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if pushSnapshot().State == "error" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("监督器未在 ctx 取消后退出")
+	}
+	if got := pushSnapshot().State; got != "error" {
+		t.Fatalf("配置具备时应启动订阅并进入连接失败重试态 error，实际 %s", got)
+	}
+}
