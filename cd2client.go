@@ -139,7 +139,11 @@ func parseTokenInfo(b []byte) *TokenInfo {
 			AllowPushMessage       bool `json:"allow_push_message"`
 		} `json:"permissions"`
 	}
-	_ = json.Unmarshal(b, &raw)
+	if err := json.Unmarshal(b, &raw); err != nil {
+		// 权限解析失败不再静默吞掉：字段漂移时（如 allow_push_message 字段号变化）会
+		// 产出空权限且毫无痕迹，与历史 P1 是同类缺陷结构，此处至少留一条日志。
+		appendLog("警告：Token 权限解析失败（%v），本次权限判定可能不准确", err)
+	}
 	exp, _ := strconv.ParseUint(raw.ExpiresIn, 10, 64)
 	if raw.RootDir == "" {
 		raw.RootDir = "/"

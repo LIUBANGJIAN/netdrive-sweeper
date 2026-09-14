@@ -257,3 +257,35 @@ func containsSub(s, sub string) bool {
 	}
 	return false
 }
+
+// TestQA_TokenPermissionsHasPushMessage 是 P1-1 的回归护栏：
+// TokenPermissions 必须声明 allow_push_message（字段号 41），否则权限经 protojson 往返后恒为 false，
+// 事件驱动实时清理将永远无法启动。
+func TestQA_TokenPermissionsHasPushMessage(t *testing.T) {
+	r, err := loadResolver()
+	if err != nil {
+		t.Fatalf("loadResolver: %v", err)
+	}
+	f := r.mustMsg("TokenPermissions").Fields().ByName("allow_push_message")
+	if f == nil {
+		t.Fatal("TokenPermissions 缺少 allow_push_message 字段（P1-1 回归）")
+	}
+	if f.Number() != 41 {
+		t.Fatalf("allow_push_message 字段号=%d，期望 41", f.Number())
+	}
+}
+
+// TestQA_NormalizeConfig_MaxDepth 覆盖 MaxDepth 的归一化（0=不限，负数归 0，>100 归 100）。
+func TestQA_NormalizeConfig_MaxDepth(t *testing.T) {
+	for _, c := range []struct{ in, want int }{
+		{-5, 0}, {0, 0}, {5, 5}, {100, 100}, {101, 100},
+	} {
+		if got := normalizeConfig(Config{MaxDepth: c.in}).MaxDepth; got != c.want {
+			t.Errorf("MaxDepth(%d)=%d want %d", c.in, got, c.want)
+		}
+	}
+	// 空 IncompleteSuffixes 必须回填默认（保险丝保护）。
+	if got := normalizeConfig(Config{IncompleteSuffixes: "  "}).IncompleteSuffixes; got == "" {
+		t.Error("empty IncompleteSuffixes must fall back to default")
+	}
+}

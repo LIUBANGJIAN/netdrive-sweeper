@@ -180,3 +180,35 @@ func TestSmoke_SweeperRunEmptyTasksFriendlyError(t *testing.T) {
 		t.Fatalf("错误信息=%q，期望 %q", err.Error(), want)
 	}
 }
+
+// TestSmoke_SaveMergePreservesMaxDepth 证明合并解码不会把 max_depth 抹成 0（= 不限递归深度），
+// 它是「保存即重置」缺陷中最危险的字段（0 表示不限深，误置会放大 API 调用与风控风险）。
+func TestSmoke_SaveMergePreservesMaxDepth(t *testing.T) {
+	defer withTempPaths(t)()
+	if err := mustLoadConfig(); err != nil {
+		t.Fatalf("mustLoadConfig: %v", err)
+	}
+	// 先显式写入非零 max_depth。
+	rec1 := httptest.NewRecorder()
+	handleSave(rec1, httptest.NewRequest("POST", "/api/save", strings.NewReader(`{"max_depth":3}`)))
+	if rec1.Code != 200 {
+		t.Fatalf("save max_depth code=%d body=%s", rec1.Code, rec1.Body.String())
+	}
+	if currentConfig().MaxDepth != 3 {
+		t.Fatalf("写入后 max_depth=%d，期望 3", currentConfig().MaxDepth)
+	}
+	// 再只提交 tasks，max_depth 必须保留 3 而非被清零。
+	rec2 := httptest.NewRecorder()
+	handleSave(rec2, httptest.NewRequest("POST", "/api/save", strings.NewReader(`{"tasks":["/电影"]}`)))
+	if rec2.Code != 200 {
+		t.Fatalf("partial save code=%d body=%s", rec2.Code, rec2.Body.String())
+	}
+	if got := currentConfig().MaxDepth; got != 3 {
+		t.Fatalf("部分提交后 max_depth=%d，期望保留 3（被合并解码重置！）", got)
+	}
+	// 其余保险丝字段也应保留为非零默认值。
+	if currentConfig().MaxFilesPerRun <= 0 || currentConfig().MaxTotalBytes <= 0 || currentConfig().Burst <= 0 {
+		t.Fatalf("保险丝字段被重置：max_files=%d max_bytes=%d burst=%d",
+			currentConfig().MaxFilesPerRun, currentConfig().MaxTotalBytes, currentConfig().Burst)
+	}
+}

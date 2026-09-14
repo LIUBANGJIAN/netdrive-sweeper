@@ -203,6 +203,7 @@ table.tbl .mark{width:44px;text-align:center}
 .empty{text-align:center;padding:var(--s5) 12px;color:var(--muted)}
 .empty .ico{font-size:32px;display:block;margin-bottom:var(--s2)}
 .empty .t{color:var(--text-dim);font-size:14px;margin-bottom:4px}
+.empty .t.ok{color:var(--ok-text)}
 .skel{display:inline-block;min-width:44px;height:12px;border-radius:4px;background:linear-gradient(90deg,var(--card),#2b313a,var(--card));background-size:200% 100%;animation:sk 1.2s linear infinite;vertical-align:middle}
 @keyframes sk{0%{background-position:200% 0}100%{background-position:-200% 0}}
 
@@ -235,6 +236,8 @@ table.tbl .mark{width:44px;text-align:center}
  .statgrid{grid-template-columns:1fr 1fr}
  .btn{min-height:44px}
  .tab{padding:12px 10px}
+ .mini,.chip,table.tbl th.sortable{min-height:44px}
+ .mini,.chip{display:inline-flex;align-items:center}
  .tb-meta.suggest{display:none}
  #toastRoot{left:12px;right:12px;bottom:12px;align-items:stretch}
  .modal-mask{align-items:flex-end;padding:0}
@@ -328,7 +331,7 @@ table.tbl .mark{width:44px;text-align:center}
         <div class="formgroup"><label>限速 ops/秒</label><input id="opsPerSec" type="number" step="0.1" value="5"><div class="help warn">每次 gRPC 调用前取令牌。默认 5，对齐 115 官方上限，调高会增加风控风险</div></div>
         <div class="formgroup"><label>文件冷却小时</label><input id="cooldown" type="number" value="6"><div class="help">新文件在冷却期内跳过，保护刚到达的文件。默认 6 小时</div></div>
         <div class="formgroup"><label>排除关键词</label><input id="excludeDirs" value="重要,备份"><div class="help">目录名包含任一关键词即整目录跳过。重要目录务必填入</div></div>
-        <div class="formgroup"><label>推送防抖秒数</label><input id="pushDebounce" type="number" value="5"><div class="help">事件驱动下合并突发变更的静默窗口。默认 5 秒</div></div>
+        <div class="formgroup"><label>推送防抖秒数</label><input id="pushDebounce" type="number" value="5"><div class="help">事件驱动下合并突发变更的静默窗口。默认 5 秒（修改后需重启生效）</div></div>
         <div class="formgroup"><label>未完成后缀</label><input id="incompleteSuffixes" value=".part,.download,.!qB,.bc!,.aria2,.crdownload,.td,.tmp,.!ut"><div class="help">含这些后缀的目录整目录跳过。留空会自动回填默认值，不建议清空</div></div>
       </div>
       <div class="checks">
@@ -398,8 +401,8 @@ table.tbl .mark{width:44px;text-align:center}
         <table class="tbl" id="resultTbl">
           <thead><tr>
             <th class="mark" title="标记已复核">●</th>
-            <th class="sortable" data-sort="path">文件路径 ▲▼</th>
-            <th class="sortable r" data-sort="size">大小</th>
+            <th class="sortable" data-sort="path">文件路径 <span id="dir-path"></span></th>
+            <th class="sortable r" data-sort="size">大小 <span id="dir-size"></span></th>
             <th>命中原因</th>
           </tr></thead>
           <tbody id="resultBody"><tr><td colspan="4"><div class="empty"><span class="ico">🔍</span><span class="t">还没有扫描结果</span><div>点上方「扫描预览」查看会命中哪些文件</div></div></td></tr></tbody>
@@ -441,6 +444,7 @@ table.tbl .mark{width:44px;text-align:center}
             <span class="chip" data-log="warn">警告</span>
           </div>
           <label class="check"><input type="checkbox" id="logFollow" checked>跟随最新</label>
+          <button class="backlatest hidden" id="logBackBottom">↓ 回到最新</button>
           <button class="btn btn-ghost btn-sm" id="logCopyBtn">复制</button>
           <button class="btn btn-ghost btn-sm" id="logsBtn">刷新</button>
           <button class="btn btn-danger btn-sm" id="clearLogsBtn">清空</button>
@@ -581,6 +585,12 @@ function switchTab(name){
 el('tabs').addEventListener('click',function(e){var b=e.target.closest('.tab');if(b)switchTab(b.dataset.tab)});
 
 /* ---------- guide ---------- */
+function applyGuideCollapsed(v){
+  var b=el('guideCard');b.dataset.collapsed=v?'1':'0';
+  el('stepper').classList.toggle('hidden',!!v);
+  el('guideHint').classList.toggle('hidden',!!v);
+  el('guideToggle').textContent=v?'展开':'收起';
+}
 function renderGuide(){
   var steps=[['连接','测试连接'],['目录','添加目录'],['规则','确认规则'],['预览','扫描预览'],['启用','允许自动清理']];
   var done=[progress.conn,taskList().length>0,progress.rules,progress.preview,progress.enable];
@@ -593,7 +603,12 @@ function renderGuide(){
     h+='<div class="stepdot '+cls+'"><div class="num">'+num+'</div><div class="lbl">'+esc(steps[i][0])+'</div></div>';
   }
   el('stepper').innerHTML=h;
-  el('guideHint').textContent=cur>=steps.length?'首次配置已完成 ✓ 如需重新查看，点「收起/展开」切换。':('下一步：'+steps[cur][1]+'。');
+  var doneAll=cur>=steps.length;
+  el('guideHint').textContent=doneAll?'首次配置已完成 ✓ 如需重新查看，点「收起/展开」切换。':('下一步：'+steps[cur][1]+'。');
+  if(doneAll){
+    var gs;try{gs=localStorage.getItem('nds_guideCollapsed')}catch(e){gs=null}
+    applyGuideCollapsed(gs===null?true:(gs==='1'));
+  }
 }
 
 /* ---------- tasks ---------- */
@@ -787,11 +802,16 @@ function renderResult(items){
   renderResultTable();
 }
 function uniqExts(items){var s={};items.forEach(function(x){var e='.'+String(x.name).split('.').pop().toLowerCase();s[e]=1});return Object.keys(s).sort()}
+function renderSortIndicator(){
+  el('dir-path').textContent=tbl.sortKey==='path'?(tbl.sortDir==='asc'?'▲':'▼'):'';
+  el('dir-size').textContent=tbl.sortKey==='size'?(tbl.sortDir==='asc'?'▲':'▼'):'';
+}
 function renderResultTable(){
+  renderSortIndicator();
   var rows=currentRows();
   var total=rows.length,sizeSum=rows.reduce(function(a,x){return a+(x.size||0)},0);
   var reviewed=rows.filter(function(x){return tbl.reviewed[x.path]}).length;
-  el('tblSummary').textContent='已复核 '+reviewed+' / 本页筛选 '+total+' · 合计 '+formatSize(sizeSum);
+  el('tblSummary').textContent='已复核 '+reviewed+' / 共 '+total+' · 合计 '+formatSize(sizeSum);
   var pages=Math.max(1,Math.ceil(total/tbl.pageSize));
   if(tbl.page>pages)tbl.page=pages;if(tbl.page<1)tbl.page=1;
   var start=(tbl.page-1)*tbl.pageSize;
@@ -799,7 +819,7 @@ function renderResultTable(){
   var body=el('resultBody');
   if(!total){
     var all=(lastScan&&lastScan.items)||[];
-    body.innerHTML='<tr><td colspan="4"><div class="empty"><span class="ico">'+(all.length?'✅':'🔍')+'</span><span class="t">'+(all.length?'未发现符合条件的垃圾文件':'还没有扫描结果')+'</span><div>'+(all.length?'当前规则下目录很干净；如需更严格，可调整②清理规则':'点上方「扫描预览」查看会命中哪些文件')+'</div></div></td></tr>';
+    body.innerHTML='<tr><td colspan="4"><div class="empty"><span class="ico">'+(all.length?'✅':'🔍')+'</span><span class="t'+(all.length?' ok':'')+'">'+(all.length?'未发现符合条件的垃圾文件':'还没有扫描结果')+'</span><div>'+(all.length?'当前规则下目录很干净；如需更严格，可调整②清理规则':'点上方「扫描预览」查看会命中哪些文件')+'</div></div></td></tr>';
     el('tblPager').innerHTML='';return;
   }
   body.innerHTML=page.map(function(x){
@@ -854,6 +874,7 @@ function classify(line){
   if(/WARN|警告|跳过/.test(line))return 'warn';
   return '';
 }
+function syncLogBack(){el('logBackBottom').classList.toggle('hidden',!!logState.follow)}
 function renderLogs(){
   var lines=(logState.raw||'').split('\n');
   if(lines.length>2000)lines=lines.slice(lines.length-2000);
@@ -868,15 +889,17 @@ function renderLogs(){
     out.push('<span class="logline '+cls+'">'+(ts?'<span class="ts">'+esc(ts)+'</span>':'')+'<span class="tx">'+esc(tx)+'</span></span>');
   });
   var box=el('logsBox');
-  if(!out.length){box.innerHTML='<div class="list-empty"><span class="ico">📝</span><span class="t">暂无运行日志</span></div>';return}
+  if(!out.length){box.innerHTML='<div class="list-empty"><span class="ico">📝</span><span class="t">暂无运行日志</span></div>';syncLogBack();return}
   box.innerHTML=out.join('');
   if(logState.follow){box.scrollTop=box.scrollHeight}
+  syncLogBack();
 }
 function loadLogs(){return api('/api/logs?_='+Date.now()).then(function(j){logState.raw=j.logs||'';renderLogs()})}
 el('logSearch').addEventListener('input',function(){logState.search=val('logSearch').toLowerCase();renderLogs()});
 el('logChips').addEventListener('click',function(e){var c=e.target.closest('.chip');if(!c)return;logState.level=c.dataset.log;el('logChips').querySelectorAll('.chip').forEach(function(x){x.classList.toggle('active',x===c)});renderLogs()});
-el('logFollow').addEventListener('change',function(){logState.follow=checked('logFollow');if(logState.follow){el('logsBox').scrollTop=el('logsBox').scrollHeight}});
-el('logsBox').addEventListener('scroll',function(){var b=el('logsBox');var atBottom=(b.scrollHeight-b.scrollTop-b.clientHeight)<8;if(!atBottom&&checked('logFollow')){el('logFollow').checked=false;logState.follow=false}});
+el('logFollow').addEventListener('change',function(){logState.follow=checked('logFollow');if(logState.follow){el('logsBox').scrollTop=el('logsBox').scrollHeight}syncLogBack()});
+el('logsBox').addEventListener('scroll',function(){var b=el('logsBox');var atBottom=(b.scrollHeight-b.scrollTop-b.clientHeight)<8;if(!atBottom&&checked('logFollow')){el('logFollow').checked=false;logState.follow=false;syncLogBack()}});
+el('logBackBottom').addEventListener('click',function(){logState.follow=true;el('logFollow').checked=true;el('logsBox').scrollTop=el('logsBox').scrollHeight;syncLogBack()});
 function logCopy(){var box=el('logsBox');copyText(box.innerText||box.textContent||'')}
 
 /* ---------- misc ---------- */
@@ -906,7 +929,7 @@ el('logCopyBtn').addEventListener('click',logCopy);
 el('clearLogsBtn').addEventListener('click',function(){
   confirmDialog({title:'确认清空运行日志？',body:'将删除全部运行日志；此操作不可恢复（清理记录不受影响）。',okText:'清空日志'}).then(function(ok){if(ok)api('/api/clear_logs',{method:'POST'}).then(function(){return loadLogs()}).then(function(){toast('日志已清空','success')}).catch(function(e){toast(e.message,'error')})});
 });
-el('guideToggle').addEventListener('click',function(){var b=el('guideCard');var collapsed=b.dataset.collapsed==='1';b.dataset.collapsed=collapsed?'0':'1';el('stepper').classList.toggle('hidden',!collapsed);el('guideHint').classList.toggle('hidden',!collapsed);el('guideToggle').textContent=collapsed?'收起':'展开'});
+el('guideToggle').addEventListener('click',function(){var v=el('guideCard').dataset.collapsed!=='1';applyGuideCollapsed(v);try{localStorage.setItem('nds_guideCollapsed',v?'1':'0')}catch(e){}});
 function showLogsPane(which){
   el('paneRecords').classList.toggle('hidden',which!=='records');
   el('paneLogs').classList.toggle('hidden',which!=='logs');

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -223,7 +224,7 @@ func TestNormalizeConfig_BackfillsIncompleteSuffixes(t *testing.T) {
 	if c.IncompleteSuffixes == "" {
 		t.Fatal("empty incomplete_suffixes must be backfilled with defaults")
 	}
-	if !containsSub(c.IncompleteSuffixes, ".part") || !containsSub(c.IncompleteSuffixes, ".!qB") {
+	if !strings.Contains(c.IncompleteSuffixes, ".part") || !strings.Contains(c.IncompleteSuffixes, ".!qB") {
 		t.Fatalf("backfilled incomplete_suffixes %q must contain .part and .!qB", c.IncompleteSuffixes)
 	}
 	// 仅空白也应回填。
