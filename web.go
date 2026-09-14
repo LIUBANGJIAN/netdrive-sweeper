@@ -367,20 +367,34 @@ function copyText(txt){
 /* ---------- dirty ---------- */
 function setDirty(v){dirty=v;el('dirtyFlag').classList.toggle('hidden',!v);el('tabRulesDot').classList.toggle('hidden',!v);}
 
-/* ---------- busy / run feedback ---------- */
-var runTimer=null,runStart=0;
-function tickRun(){var s=Math.floor((Date.now()-runStart)/1000);var t='运行中 · 已耗时 '+s+'s';if(s>30)t+=' · 仍在进行，请勿关闭页面';el('runState').textContent=t;el('busyText').textContent=t;}
+/* ---------- run feedback（无秒级计时、无全屏遮罩） ---------- */
+// 需求：手动清理时不再显示秒级耗时文案，改为在「运行日志」里实时滚动清理明细。
+// 进行中反馈仅保留 #runBtn 的内联 spinner + 禁用态与顶部进度条，不再用全屏遮罩遮挡日志。
+var runPollTimer=null;
 function startRun(btn,label){
   if(btn){btn.dataset.orig=btn.textContent;btn.disabled=true;btn.innerHTML='<span class="spinner"></span>'+esc(label)}
-  el('busy').style.display='flex';el('progress').classList.add('on');
-  runStart=Date.now();tickRun();runTimer=setInterval(tickRun,1000);
+  el('progress').classList.add('on');
+  el('runState').textContent='运行中…';
   el('runBtn').disabled=true;
 }
 function endRun(){
-  if(runTimer){clearInterval(runTimer);runTimer=null}
-  el('busy').style.display='none';el('progress').classList.remove('on');el('runState').textContent='空闲';
+  el('progress').classList.remove('on');el('runState').textContent='空闲';
   var b=el('runBtn');b.disabled=false;if(b.dataset.orig){b.textContent=b.dataset.orig;delete b.dataset.orig}
   guardEmptyTasks();
+}
+// 运行期高频拉取日志：切到日志页、强制跟随最新、先刷一次，再每 1200ms 拉一次。
+// 期间让 8s 常规轮询让位（常规轮询判断 runPollTimer 存在则跳过），避免重复请求。
+function startRunPolling(){
+  logState.follow=true;el('logFollow').checked=true;
+  switchTab('logs');
+  loadLogs().catch(function(){});
+  if(runPollTimer)clearInterval(runPollTimer);
+  runPollTimer=setInterval(function(){loadLogs().catch(function(){})},1200);
+}
+// 结束运行期滚动：清掉定时器，并立即补刷一次，确保收尾日志（扫描汇总）也在页面上。
+function stopRunPolling(){
+  if(runPollTimer){clearInterval(runPollTimer);runPollTimer=null}
+  loadLogs().catch(function(){});
 }
 
 /* ---------- modal ---------- */
@@ -668,14 +682,13 @@ function executeRun(doDelete){
   var go=function(){
     var btn=el('runBtn');
     startRun(btn,doDelete?'清理中…':'扫描中…');
+    // 运行期启动日志实时滚动（切到日志页并每 1200ms 刷新），让逐行清理明细立刻可见。
+    startRunPolling();
     api(doDelete?'/api/clean':'/api/scan').then(function(j){
       lastScan=j;lastScanTime=new Date();
       renderRunMeta();
       toast(doDelete?('手动清理完成：删除 '+j.deleted+' 个'):('手动清理完成（未开启删除总开关，仅扫描）：命中 '+j.matched+' 个'),'success');
-      // 日志是现在唯一的结果视图：切过去并刷新，让本轮明细立即可见。
-      switchTab('logs');
-      loadLogs().catch(function(){});
-    }).catch(function(e){toast(e.message,'error')}).finally(function(){endRun()});
+    }).catch(function(e){toast(e.message,'error')}).finally(function(){stopRunPolling();endRun()});
   };
   // 未保存的修改不会被本次扫描采用（扫描读的是后端已保存的配置），先保存再执行。
   if(dirty){
@@ -795,7 +808,8 @@ loadLastScan();
 // 轻量轮询：推送状态与结果快照都只读后端内存（无网络调用，不触发扫全树）。
 setInterval(function(){loadPush().catch(function(){})},5000);
 // 日志是唯一结果视图：仅在「当前在日志页 且 勾选了跟随最新」时自动刷新，避免打断手动翻阅。
-setInterval(function(){if(activeTab==='logs'&&logState.follow)loadLogs().catch(function(){})},8000);
+// 运行期（runPollTimer 存在）由 1200ms 高频轮询负责，常规 8s 轮询让位，避免重复请求。
+setInterval(function(){if(activeTab==='logs'&&logState.follow&&!runPollTimer)loadLogs().catch(function(){})},8000);
 setInterval(loadLastScan,12000);
 </script>
 </body></html>`

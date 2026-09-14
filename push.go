@@ -24,11 +24,15 @@ func isFileSystemChange(messageType int32) bool {
 type pushConsumer struct {
 	client   *CD2Client
 	debounce time.Duration
+	// maxDelay 是单次突发的最大延迟上限（= 6×debounce）。纯防抖下持续不断的事件流会让
+	// trigger 永远无法触发（即「有时行有时不行」的根因），此上限保证突发在最坏情况下也能按时触发。
+	maxDelay time.Duration
 	trigger  func()
 	log      func(format string, args ...any)
 
-	mu    sync.Mutex  // 保护 timer
-	timer *time.Timer // 当前待触发的防抖定时器
+	mu           sync.Mutex  // 保护 timer / firstEventAt
+	timer        *time.Timer // 当前待触发的防抖定时器
+	firstEventAt time.Time   // 当前突发中首个事件的时间；零值表示无待触发突发
 
 	tmu  sync.Mutex     // 保护 seen
 	seen map[int32]bool // 已见过的消息类型（用于首次诊断日志，避免重复刷屏）
@@ -42,6 +46,7 @@ func newPushConsumer(client *CD2Client, debounce time.Duration, trigger func()) 
 	return &pushConsumer{
 		client:   client,
 		debounce: debounce,
+		maxDelay: 6 * debounce, // 默认 5s 防抖 → 30s 上限
 		trigger:  trigger,
 		log:      appendLog,
 		seen:     map[int32]bool{},
@@ -88,7 +93,11 @@ func (p *pushConsumer) noteType(t int32) {
 }
 
 // handle 处理单条推送消息：仅当为文件系统变更时刷新防抖定时器。
-// 并发安全：多路事件到来时用互斥保护 timer。非 FSC 事件直接忽略。
+// 并发安全：多路事件到来时用互斥保护 timer / firstEventAt。非 FSC 事件直接忽略。
+//
+// 防抖 + 最大延迟上限：突发中首个事件记录到 firstEventAt；只要突发尚未超过 maxDelay，
+// 每次都按 debounce 顺延（合并抖动）。一旦达到 maxDelay 则立即触发，避免持续不断的事件流
+// 把触发时刻无限推迟（纯 debounce 的「防抖饥饿」正是「有时行有时不行」的根因）。
 func (p *pushConsumer) handle(messageType int32) {
 	p.noteType(messageType)
 	if !isFileSystemChange(messageType) {
@@ -96,15 +105,58 @@ func (p *pushConsumer) handle(messageType int32) {
 	}
 	bumpPushEvent()
 	p.mu.Lock()
+	if p.firstEventAt.IsZero() {
+		p.firstEventAt = time.Now()
+	}
+	capped := time.Since(p.firstEventAt) >= p.maxDelay
+	p.mu.Unlock()
+
+	if capped {
+		p.fire()
+		return
+	}
+	p.schedule(p.debounce)
+}
+
+// fire 取消待触发的定时器并立即触发一次 trigger。
+// 锁内重置状态、解锁后在独立 goroutine 中调用 trigger——保持「trigger 不阻塞订阅流」的既有语义。
+// 幂等：当已无待触发突发（例如达到上限的立即触发与末次事件的定时器同时到达）时不再重复触发。
+func (p *pushConsumer) fire() {
+	p.mu.Lock()
+	active := !p.firstEventAt.IsZero() || p.timer != nil
+	p.firstEventAt = time.Time{}
+	if p.timer != nil {
+		p.timer.Stop()
+		p.timer = nil
+	}
+	p.mu.Unlock()
+	if !active {
+		return
+	}
+	go func() {
+		if p.trigger != nil {
+			p.trigger()
+		}
+	}()
+}
+
+// schedule 以新的延迟重建防抖定时器（先停掉旧 timer）。
+func (p *pushConsumer) schedule(d time.Duration) {
+	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.timer != nil {
 		p.timer.Stop()
 	}
-	p.timer = time.AfterFunc(p.debounce, func() {
-		if p.trigger != nil {
-			p.trigger()
-		}
-	})
+	p.timer = time.AfterFunc(d, p.fire)
+}
+
+// rearm 用于「本轮突发未真正被处理」（如扫描互斥）：把突发起点重置为现在并按 debounce 重新计时，
+// 使这一轮稍后自动重试。目标：任何一次突发事件都不会因为扫描互斥而丢失。
+func (p *pushConsumer) rearm() {
+	p.mu.Lock()
+	p.firstEventAt = time.Now()
+	p.mu.Unlock()
+	p.schedule(p.debounce)
 }
 
 // run 常驻订阅直到 ctx 取消。订阅断开后按固定退避重连（重连退避不是扫描循环，允许）。

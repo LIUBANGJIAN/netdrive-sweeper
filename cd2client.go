@@ -9,12 +9,14 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bufbuild/protocompile"
 	"github.com/bufbuild/protocompile/linker"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -80,6 +82,16 @@ func newCD2Client(cfg Config) (*CD2Client, error) {
 	conn, err := grpc.NewClient(cfg.Address,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithDefaultCallOptions(grpc.ForceCodec(dynamicCodec{})),
+		// keepalive：CD2 重启或 TCP 半开时，长连的 PushMessage 流若不主动探活会永久阻塞
+		//（stream.RecvMsg 既不返回 EOF 也不报错），订阅静默失效且再也不会重连。
+		// 这里让客户端在 60s 无活动后 ping、再等 20s 无响应即判定连接死亡并重建，≈80s 内自愈。
+		// PermitWithoutStream=false：仅在存在 active stream（如 PushMessage 长连）时才 ping，
+		// 避免空闲期无脑 ping 触发 CD2 侧 grpc server 的 too_many_pings GOAWAY。
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                60 * time.Second,
+			Timeout:             20 * time.Second,
+			PermitWithoutStream: false,
+		}),
 	)
 	if err != nil {
 		return nil, err

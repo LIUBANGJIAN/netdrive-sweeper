@@ -89,9 +89,9 @@ func main() {
 	// 事件驱动实时清理（P0-27）：常驻订阅 CD2 PushMessage，是替代定时轮询的唯一合法实时感知方式。
 	// 由 pushSupervisor 统一管理：配置一旦保存即热启动 / 热重启，无需重启容器。
 	go pushSupervisor(rootCtx)
-	// 启动即自检 CD2 连接与 Token 权限：这样容器启动 / 更新镜像后，页面无需手动点
-	// 「测试连接」就能显示连接状态与权限徽章。
-	go statusProbeLoop(rootCtx)
+	// 启动即常驻自检 CD2 连接与 Token 权限：这样容器启动 / 更新镜像后，页面无需手动点
+	// 「测试连接」就能显示连接状态与权限徽章；CD2 晚启动或中途重启也能自动恢复。
+	go statusMonitor(rootCtx)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleIndex)
 	mux.HandleFunc("/api/state", handleState)
@@ -492,19 +492,36 @@ func runPushConsumer(ctx context.Context, c Config) {
 			continue
 		}
 		if !token.AllowPushMessage {
+			// 即便 Token 缺少消息推送权限，也要写入连接状态与权限徽章——否则用户
+			// 「配好地址 + Token 后徽章仍不亮、必须手点测试连接」的问题依旧存在
+			//（缺少 push 权限正是用户当前观察到的现象）。
+			markPushDeniedConnected(token)
 			client.Close()
 			setPushState("denied", "Token 缺少 allow_push_message 权限，事件驱动不生效")
 			appendLog("Token 缺少 allow_push_message 权限，事件驱动实时清理不可用（不影响手动清理）。" +
-				"在 CD2 为该 Token 勾选该权限后回本页「保存配置」即可生效，无需重启容器")
-			return
+				"在 CD2 为该 Token 勾选该权限后会自动生效，无需保存配置或重启容器")
+			// 不永久 return：60s 退避后重试，用户勾选 allow_push_message 后无需任何操作即可自愈。
+			if !waitOrDone(ctx, 60*time.Second) {
+				return
+			}
+			continue
 		}
 		// 订阅成功即顺手刷新运行状态（含权限徽章），用的是本次已经取到的 Token，不额外发请求。
 		setStatus("已连接: "+token.RootDir, token)
-		p := newPushConsumer(client, debounce, func() {
+		// 先声明后赋值：让 trigger 闭包能引用 p 本身，从而在扫描互斥时 rearm 重试。
+		var p *pushConsumer
+		p = newPushConsumer(client, debounce, func() {
 			appendLog("收到文件系统变更事件，防抖后触发扫描")
 			// runScan 自带 scanBusy 互斥，进行中会返回「已有扫描任务」错误。
 			res, serr := runScan(ctx, currentConfig().AllowDelete)
 			if serr != nil {
+				// 扫描互斥不能丢弃本轮事件：若这是某次突发的最后一个事件，对应文件将
+				// 永远不会被清理。此时延后一轮，在 debounce 后自动重试（rearm）。
+				if strings.Contains(serr.Error(), "已有扫描任务") {
+					appendLog("事件触发扫描延后（当前有扫描进行中），稍后将自动重试")
+					p.rearm()
+					return
+				}
 				appendLog("事件触发扫描跳过: %v", serr)
 				return
 			}
@@ -555,25 +572,75 @@ func probeCD2Status(ctx context.Context, c Config) (*TokenInfo, error) {
 	return token, nil
 }
 
-// statusProbeLoop 启动自检：成功即结束；失败则 20s 后再试一次，
-// 以覆盖「CD2 比本容器启动得晚」这一常见顺序问题。只探测两次，绝不无限重试。
-func statusProbeLoop(ctx context.Context) {
-	for attempt := 0; attempt < 2; attempt++ {
+// markPushDeniedConnected 在 Token 缺少消息推送权限时，依然写入「已连接」状态与 Token，
+// 使连接状态与权限徽章自动点亮（无需手点「测试连接」）。抽成独立函数便于单元测试。
+func markPushDeniedConnected(token *TokenInfo) {
+	if token == nil {
+		return
+	}
+	setStatus("已连接: "+token.RootDir+"（Token 缺少消息推送权限）", token)
+}
+
+// statusMonitor 常驻自检 CD2 连接与 Token 权限，随进程生命周期存续。
+//
+// 首次连上采用指数退避（3s→6s→12s→24s→30s 封顶）；连上之后不退出，转为 30s 稳态刷新。
+// 这样「CD2 比本容器启动得晚」或「CD2 中途重启」都能自动恢复，无需用户点任何按钮。
+// 只做 TCPCheck + TokenInfo 这类轻量元数据调用，绝不遍历目录，
+// 因此不属于「每 N 秒扫全树」，与风控约束不冲突。
+// 仅在连接状态发生翻转时写日志（首次探测的结果也算一次翻转），避免每 30s 刷屏。
+// ctx 取消即返回，不泄漏 goroutine。
+func statusMonitor(ctx context.Context) {
+	const (
+		minBackoff   = 3 * time.Second
+		maxBackoff   = 30 * time.Second
+		steady       = 30 * time.Second // 连上后的稳态刷新间隔
+		unconfigured = 15 * time.Second // 未配置地址 / Token 时的重试间隔
+	)
+	backoff := minBackoff
+	connected := false // 是否已至少连上一次：决定用指数退避还是稳态间隔
+	prevUp := false    // 上次探测是否连上：仅在翻转时记日志
+	probed := false    // 是否已探测过：让「首次不可达」也留下一条可读日志
+
+	for {
 		if ctx.Err() != nil {
 			return
 		}
 		c := currentConfig()
 		if normalizeAddress(c.Address) == "" || strings.TrimSpace(c.Token) == "" {
-			appendLog("启动自检跳过：CD2 地址或 Token 未配置")
-			return
+			// 未配置：只更新状态并等待，绝不 return（用户随时可能补上配置）。
+			setStatus("未配置 CD2 地址或 Token", nil)
+			prevUp = false
+			if !waitOrDone(ctx, unconfigured) {
+				return
+			}
+			continue
 		}
+
 		token, err := probeCD2Status(ctx, c)
-		if err == nil {
-			appendLog("启动自检：CD2 连接正常，Token 根目录 %s；权限 %s", token.RootDir, permSummary(token))
-			return
+		up := err == nil
+		switch {
+		case up && !prevUp: // 首次连上 或 由失败恢复正常
+			appendLog("状态自检：CD2 连接正常，Token 根目录 %s；权限 %s", token.RootDir, permSummary(token))
+		case !up && prevUp: // 由正常转为失败
+			appendLog("状态自检：CD2 连接中断（%v），将持续重试", err)
+		case !up && !probed: // 首次探测即失败
+			appendLog("状态自检：CD2 暂不可达（%v），将持续重试", err)
 		}
-		appendLog("启动自检：CD2 暂不可达（%v）", err)
-		if !waitOrDone(ctx, 20*time.Second) {
+		if up {
+			connected = true
+		}
+		prevUp = up
+		probed = true
+
+		wait := steady
+		if !connected {
+			wait = backoff
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		}
+		if !waitOrDone(ctx, wait) {
 			return
 		}
 	}
