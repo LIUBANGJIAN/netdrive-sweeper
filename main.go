@@ -77,6 +77,15 @@ func main() {
 	if err := mustLoadConfig(); err != nil {
 		appendLog("配置加载警告: %v", err)
 	}
+	// 启动即写入一条可读的系统运行摘要，让页面「运行日志」能反映系统运行情况
+	// （此前只走 log.Printf/stdout，页面读的是 data/clean.log，用户看不到）。
+	cfg := currentConfig()
+	delMode := "回收站"
+	if cfg.DeletePermanently {
+		delMode = "永久删除"
+	}
+	appendLog("系统启动 | 地址=%s 事件驱动=%v 防抖=%ds 冷却=%dh 删除方式=%s 允许删除=%v 清理目录=%d 个",
+		cfg.Address, cfg.EnablePush, cfg.PushDebounceSeconds, cfg.FileCooldownHours, delMode, cfg.AllowDelete, len(cfg.Tasks))
 	// 事件驱动实时清理（P0-27）：常驻订阅 CD2 PushMessage，是替代定时轮询的唯一合法实时感知方式。
 	// 由 pushSupervisor 统一管理：配置一旦保存即热启动 / 热重启，无需重启容器。
 	go pushSupervisor(rootCtx)
@@ -228,6 +237,7 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("未配置任何目录，请先在「连接与目录」中添加要清理的目录"))
 		return
 	}
+	appendLog("手动扫描开始（预览，不删除）")
 	res, err := runScan(r.Context(), false)
 	if err != nil {
 		writeError(w, err)
@@ -242,6 +252,11 @@ func handleClean(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("未配置任何目录，请先在「连接与目录」中添加要清理的目录"))
 		return
 	}
+	delMode := "回收站"
+	if currentConfig().DeletePermanently {
+		delMode = "永久删除"
+	}
+	appendLog("手动扫描开始（删除方式：%s）", delMode)
 	res, err := runScan(r.Context(), true)
 	if err != nil {
 		writeError(w, err)

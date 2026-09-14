@@ -22,15 +22,17 @@ func TestHandleIndex_RendersPage(t *testing.T) {
 		`id="runBtn"`,
 		`id="pushState"`,
 		`id="pushHint"`,
+		`id="lastRunMeta"`,
+		`id="logsBox"`,
 		`data-tab="config"`,
-		`data-tab="run"`,
+		`data-tab="logs"`,
 		`id="saveBtn2"`,
 	} {
 		if !strings.Contains(body, m) {
 			t.Fatalf("页面缺少 %q", m)
 		}
 	}
-	for _, m := range []string{`id="guideCard"`, `id="offlineBox"`, `id="scanBtn"`, `id="cleanBtn"`} {
+	for _, m := range []string{`id="saveBtn"`, `id="resultTbl"`, `id="recPanel"`, `id="statChecked"`, `id="guideCard"`, `id="offlineBox"`, `id="scanBtn"`, `id="cleanBtn"`} {
 		if strings.Contains(body, m) {
 			t.Fatalf("页面不应再包含 %q", m)
 		}

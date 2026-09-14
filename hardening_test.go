@@ -102,12 +102,12 @@ func TestHandleClean_EmptyTasksFriendlyErrorBeforeCD2(t *testing.T) {
 // 新做法：后端 /api/push 输出真实订阅状态（running/denied/config_missing/error），前端只呈现。
 func TestWebStaticMarkers_PushStatusSingleSourceOfTruth(t *testing.T) {
 	mustContain := map[string]string{
-		"顶部推送状态元素": `id="pushState"`,
-		"规则区提示容器":  `id="pushHint"`,
-		"renderPush 定义": `function renderPush(p){`,
-		"数据来自后端":    `renderPush(j.push)`,
-		"轮询推送状态接口":  `/api/push?_=`,
-		"Gap A 禁用并记录原文案": `btn.dataset.orig=btn.textContent;btn.disabled=true;btn.textContent='测试中…'`,
+		"顶部推送状态元素":         `id="pushState"`,
+		"规则区提示容器":          `id="pushHint"`,
+		"renderPush 定义":    `function renderPush(p){`,
+		"数据来自后端":           `renderPush(j.push)`,
+		"轮询推送状态接口":         `/api/push?_=`,
+		"Gap A 禁用并记录原文案":   `btn.dataset.orig=btn.textContent;btn.disabled=true;btn.textContent='测试中…'`,
 		"Gap A finally 恢复": `btn.disabled=false;if(btn.dataset.orig){btn.textContent=btn.dataset.orig;delete btn.dataset.orig}`,
 	}
 	for name, m := range mustContain {
@@ -121,18 +121,18 @@ func TestWebStaticMarkers_PushStatusSingleSourceOfTruth(t *testing.T) {
 	}
 }
 
-// TestWebStaticMarkers_ConsolidatedUI 守护 UI 合并与精简（对应问题 2 / 3 / 4）：
-// 两页式（① 配置 / ② 扫描清理·记录）、单一「扫描清理」动作、结果与记录日志同页、
-// 无首次配置引导、无离线任务状态表。
+// TestWebStaticMarkers_ConsolidatedUI 守护二次精简后的形态：
+// 两页式（① 连接·目录·规则 / ② 运行日志）、顶栏唯一主操作「手动扫描」、
+// 保存入口收敛到配置页（saveBtn2）、日志是唯一结果视图；扫描结果表与清理记录已删除。
 func TestWebStaticMarkers_ConsolidatedUI(t *testing.T) {
 	mustContain := []string{
 		`data-tab="config"`,
-		`data-tab="run"`,
+		`data-tab="logs"`,
 		`id="runBtn"`,
-		`function doRun(){`,
-		`id="runMeta"`,
-		`id="resTime"`,
 		`id="saveBtn2"`,
+		`id="logsBox"`,
+		`id="lastRunMeta"`,
+		`function doRun(){`,
 	}
 	for _, m := range mustContain {
 		if !strings.Contains(pageHTML, m) {
@@ -140,6 +140,16 @@ func TestWebStaticMarkers_ConsolidatedUI(t *testing.T) {
 		}
 	}
 	mustNotContain := map[string]string{
+		"顶栏旧保存按钮": `id="saveBtn"`,
+		"旧页签-run": `id="tab-run"`,
+		"旧执行摘要":   `id="runMeta"`,
+		"旧结果时间":   `id="resTime"`,
+		"旧扫描结果表":  `id="resultTbl"`,
+		"旧清理记录面板": `id="recPanel"`,
+		"旧统计-检查":  `id="statChecked"`,
+		"旧统计-命中":  `id="statMatched"`,
+		"旧统计-删除":  `id="statDeleted"`,
+		"旧统计-跳过":  `id="statSkipped"`,
 		"首次配置引导卡": `id="guideCard"`,
 		"引导步进器":   `id="stepper"`,
 		"离线任务状态表": `id="offlineBox"`,
@@ -148,7 +158,6 @@ func TestWebStaticMarkers_ConsolidatedUI(t *testing.T) {
 		"旧执行清理按钮": `id="cleanBtn"`,
 		"旧页签-连接":  `data-tab="conn"`,
 		"旧页签-规则":  `data-tab="rules"`,
-		"旧页签-日志":  `data-tab="logs"`,
 	}
 	for name, m := range mustNotContain {
 		if strings.Contains(pageHTML, m) {
