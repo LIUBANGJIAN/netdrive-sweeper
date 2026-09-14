@@ -27,12 +27,22 @@ func TestHandleIndex_RendersPage(t *testing.T) {
 		`data-tab="config"`,
 		`data-tab="logs"`,
 		`id="saveBtn2"`,
+		`手动清理`, // 主操作按钮已由「手动扫描」更名为「手动清理」
+		`列目录`,  // 权限徽章中文化
+		`回收站删除`,
+		`永久删除`,
+		`消息推送`,
 	} {
 		if !strings.Contains(body, m) {
 			t.Fatalf("页面缺少 %q", m)
 		}
 	}
-	for _, m := range []string{`id="saveBtn"`, `id="resultTbl"`, `id="recPanel"`, `id="statChecked"`, `id="guideCard"`, `id="offlineBox"`, `id="scanBtn"`, `id="cleanBtn"`} {
+	// 主操作按钮必须落在「② 运行日志」页签之后（即运行日志卡片标题栏内），
+	// 不再常驻顶栏、不在配置页出现。
+	if iRun, iLogs := strings.Index(body, `id="runBtn"`), strings.Index(body, `data-tab="logs"`); iRun < iLogs {
+		t.Fatalf("「手动清理」按钮应位于运行日志卡片标题栏内（runBtn 索引 %d 应大于 tab-logs 索引 %d）", iRun, iLogs)
+	}
+	for _, m := range []string{`id="saveBtn"`, `id="resultTbl"`, `id="recPanel"`, `id="statChecked"`, `id="guideCard"`, `id="offlineBox"`, `id="scanBtn"`, `id="cleanBtn"`, `手动扫描`} {
 		if strings.Contains(body, m) {
 			t.Fatalf("页面不应再包含 %q", m)
 		}

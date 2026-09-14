@@ -12,7 +12,7 @@ import (
 // TestQA_ManualScanAndCleanLogsHitDisk 是「控制台精简」的永久回归测试。
 //
 // 背景：精简后「② 运行日志」成为唯一的结果视图——独立的扫描结果表格与清理记录
-// 面板都被删除。因此「手动扫描 / 手动清理」这两个动作必须把可读日志真正写到
+// 面板都被删除。因此「手动清理」这个动作必须把可读日志真正写到
 // 磁盘（data/clean.log），否则用户将彻底失去对操作结果的可见性。这条链路一旦回归，
 // 页面会静默变空，必须用测试锁死。
 //
@@ -40,7 +40,7 @@ func TestQA_ManualScanAndCleanLogsHitDisk(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	// 手动扫描（预览，不删除）
+	// 手动清理（仅扫描，未开启删除总开关）
 	scanRec := httptest.NewRecorder()
 	handleScan(scanRec, httptest.NewRequest("GET", "/api/scan", nil).WithContext(ctx))
 	if scanRec.Code == 200 {
@@ -60,22 +60,22 @@ func TestQA_ManualScanAndCleanLogsHitDisk(t *testing.T) {
 	}
 	logs := string(b)
 	for _, want := range []string{
-		"手动扫描开始（预览，不删除）",
-		"手动扫描开始（删除方式：回收站）",
+		"手动清理开始（仅扫描，未开启删除总开关）",
+		"手动清理开始（删除方式：回收站）",
 	} {
 		if !strings.Contains(logs, want) {
 			t.Fatalf("clean.log 缺少 %q\n实际日志:\n%s", want, logs)
 		}
 	}
-	// 顺序：预览扫描先于回收站清理写入。
-	if strings.Index(logs, "手动扫描开始（预览，不删除）") > strings.Index(logs, "手动扫描开始（删除方式：回收站）") {
-		t.Fatalf("日志顺序异常，应为先预览后清理：\n%s", logs)
+	// 顺序：仅扫描先于回收站清理写入。
+	if strings.Index(logs, "手动清理开始（仅扫描，未开启删除总开关）") > strings.Index(logs, "手动清理开始（删除方式：回收站）") {
+		t.Fatalf("日志顺序异常，应为先扫描后清理：\n%s", logs)
 	}
 
 	// /api/logs（日志页唯一数据源）必须回显同一份磁盘内容。
 	logRec := httptest.NewRecorder()
 	handleLogs(logRec, httptest.NewRequest("GET", "/api/logs", nil))
-	if logRec.Code != 200 || !strings.Contains(logRec.Body.String(), "手动扫描开始（删除方式：回收站）") {
+	if logRec.Code != 200 || !strings.Contains(logRec.Body.String(), "手动清理开始（删除方式：回收站）") {
 		t.Fatalf("/api/logs 未回显手动清理日志：code=%d body=%s", logRec.Code, logRec.Body.String())
 	}
 }

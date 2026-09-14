@@ -20,7 +20,7 @@ const pageHTML = `<!doctype html>
 --r-sm:6px;--r-md:8px;--r-lg:12px;--r-xl:16px;--s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:24px;--s6:32px;
 --z-header:100;--z-busy:200;--z-modal:300;--z-toast:400}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text);font-size:14px;min-height:100vh}
+body{margin:0;background:var(--bg);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text);font-size:15px;min-height:100vh}
 h1,h2,h3{margin:0}
 a{color:var(--blue)}
 .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
@@ -34,21 +34,21 @@ a{color:var(--blue)}
 .tb-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .brand{display:flex;align-items:center;gap:8px}
 .brand svg{width:18px;height:18px}
-.brand h1{font-size:17px;font-weight:700;color:var(--blue)}
-.conn{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.brand h1{font-size:18px;font-weight:700;color:var(--blue)}
+.conn{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
 .dot{width:8px;height:8px;border-radius:999px;background:var(--muted);flex:0 0 auto}
 .dot.ok{background:var(--green);box-shadow:0 0 8px rgba(63,185,80,.4)}
 .dot.connecting{background:var(--orange)}
 .dot.fail{background:var(--red)}
 .perms{display:flex;gap:5px;flex-wrap:wrap}
-.badge{padding:2px 6px;border-radius:4px;font-size:11px;line-height:1.4}
+.badge{padding:2px 7px;border-radius:4px;font-size:12px;line-height:1.45}
 .badge.ok{background:var(--ok-bg);color:var(--ok-text)}
 .badge.bad{background:var(--bad-bg);color:var(--bad-text);cursor:help}
 .badge.neutral{background:var(--bg);color:var(--muted)}
 .badge.count{background:var(--card);color:var(--muted);border-radius:999px}
 .tb-spacer{flex:1 1 auto}
-.dirty{font-size:12px;color:var(--warning-text)}
-.tb-meta{font-size:12px;color:var(--muted)}
+.dirty{font-size:13px;color:var(--warning-text)}
+.tb-meta{font-size:13px;color:var(--muted)}
 .suggest{color:var(--blue)}
 .progress{height:2px;width:100%;background:transparent;overflow:hidden}
 .progress.on{background:linear-gradient(90deg,transparent 0,var(--blue) 40%,var(--green) 60%,transparent 100%);background-size:30% 100%;background-repeat:no-repeat;animation:slide 1.1s linear infinite}
@@ -56,7 +56,7 @@ a{color:var(--blue)}
 
 /* ---------- tabs ---------- */
 .tabs{display:flex;gap:4px;padding:0 12px;border-top:1px solid var(--line);overflow-x:auto}
-.tab{position:relative;border:0;background:transparent;color:var(--muted);font-size:13px;font-weight:600;padding:10px 12px;cursor:pointer;white-space:nowrap;border-bottom:2px solid transparent}
+.tab{position:relative;border:0;background:transparent;color:var(--muted);font-size:14px;font-weight:600;padding:11px 13px;cursor:pointer;white-space:nowrap;border-bottom:2px solid transparent}
 .tab:hover{color:var(--text)}
 .tab.active{color:var(--blue);border-bottom-color:var(--blue)}
 .tab .dotmini{display:inline-block;width:6px;height:6px;border-radius:999px;background:var(--warning);margin-left:5px;vertical-align:middle}
@@ -64,25 +64,30 @@ a{color:var(--blue)}
 /* ---------- layout ---------- */
 .main{max-width:1400px;margin:0 auto;padding:var(--s4)}
 .grid{display:grid;grid-template-columns:1fr 380px;gap:var(--s4)}
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:var(--s4)}
-.col{display:grid;gap:var(--s4);align-content:start}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:var(--s4);align-items:stretch}
+/* .col 用 flex 列布局 + 卡片 flex:1：让同一行两张卡片等高，
+   消除「清理目录」比「CD2 连接」短一截时露出的豁口（不整齐问题）。 */
+.col{display:flex;flex-direction:column;gap:var(--s4)}
+.col>.card{flex:1 1 auto;display:flex;flex-direction:column}
+.col>.card>.panel{flex:1 1 auto}
 section.tabpane{display:none}
-section.tabpane.active{display:block}
+/* 页内所有块统一 16px 间距：此前全宽卡片紧贴上一行（0 间距），与网格内 16px 不一致。 */
+section.tabpane.active{display:grid;gap:var(--s4);align-content:start}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-xl);padding:18px}
-.card h2{font-size:15px;font-weight:600;color:var(--text-dim);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.card h2{font-size:16px;font-weight:600;color:var(--text-dim);margin-bottom:12px;display:flex;align-items:center;gap:8px}
 .card h2 .spacer{flex:1}
-.card h2 .step{color:var(--muted);font-size:12px}
-.sub{color:var(--muted);font-size:12px;margin:-6px 0 12px}
+.card h2 .step{color:var(--muted);font-size:13px}
+.sub{color:var(--muted);font-size:13px;margin:-6px 0 12px}
 
 /* ---------- buttons ---------- */
-.btn{border:0;border-radius:var(--r-md);padding:9px 12px;font-size:13px;font-weight:600;cursor:pointer;transition:.15s;display:inline-flex;align-items:center;gap:6px;line-height:1}
+.btn{border:0;border-radius:var(--r-md);padding:9px 13px;font-size:14px;font-weight:600;cursor:pointer;transition:.15s;display:inline-flex;align-items:center;gap:6px;line-height:1}
 .btn:focus-visible{outline:2px solid var(--info);outline-offset:2px}
 .btn:disabled{opacity:.45;cursor:not-allowed}
 .btn-primary{background:var(--success-bg);color:#fff}.btn-primary:hover:not(:disabled){background:var(--success-hover)}
 .btn-ok{background:var(--info-bg);color:#fff}.btn-ok:hover:not(:disabled){background:var(--info-hover)}
 .btn-danger{background:var(--danger-bg);color:#fff}.btn-danger:hover:not(:disabled){background:var(--danger)}
 .btn-ghost{background:var(--bg);border:1px solid var(--line);color:var(--text)}.btn-ghost:hover:not(:disabled){background:var(--card)}
-.btn-sm{padding:5px 9px;font-size:12px}
+.btn-sm{padding:5px 10px;font-size:13px}
 .actions{display:flex;gap:var(--s2);flex-wrap:wrap;margin-top:var(--s3)}
 .spinner{width:14px;height:14px;border-radius:999px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;animation:spin .7s linear infinite;display:inline-block}
 .spinner.dark{border-color:rgba(255,255,255,.15);border-top-color:var(--blue)}
@@ -90,16 +95,16 @@ section.tabpane.active{display:block}
 
 /* ---------- forms ---------- */
 .formgroup{margin-bottom:var(--s3)}
-.formgroup label{display:block;margin-bottom:5px;color:var(--muted);font-size:12px;font-weight:500}
-.formgroup input,.formgroup textarea,.formgroup select{width:100%;border:1px solid var(--line);background:var(--bg);color:var(--text);border-radius:var(--r-md);padding:9px 11px;outline:none;font-size:13px;transition:.15s;height:36px}
+.formgroup label{display:block;margin-bottom:5px;color:var(--muted);font-size:13px;font-weight:500}
+.formgroup input,.formgroup textarea,.formgroup select{width:100%;border:1px solid var(--line);background:var(--bg);color:var(--text);border-radius:var(--r-md);padding:9px 11px;outline:none;font-size:14px;transition:.15s;height:38px}
 .formgroup textarea{height:auto;min-height:60px;resize:vertical}
 .formgroup input:focus,.formgroup textarea:focus,.formgroup select:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(88,166,255,.1)}
-.formgroup .help{font-size:11px;color:var(--muted);margin-top:4px}
+.formgroup .help{font-size:12px;color:var(--muted);margin-top:4px}
 .formgroup .help.warn{color:var(--warning-text)}
-.checks .help.warn{margin-top:6px;padding:8px 12px;font-size:12px;line-height:1.5;color:var(--warning-text);background:var(--warning-bg);border:1px solid var(--warning);border-radius:6px}
+.checks .help.warn{margin-top:6px;padding:8px 12px;font-size:13px;line-height:1.5;color:var(--warning-text);background:var(--warning-bg);border:1px solid var(--warning);border-radius:6px}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:var(--s3)}.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--s3)}
 .checks{display:flex;gap:var(--s2);flex-wrap:wrap;margin-top:var(--s3)}
-.check{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:var(--r-sm);padding:6px 9px;background:var(--bg);font-size:12px;color:var(--text)}
+.check{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:var(--r-sm);padding:7px 10px;background:var(--bg);font-size:13px;color:var(--text)}
 .check.warn{border-color:var(--danger)}
 .check input{width:auto;height:auto}
 .inline{display:flex;gap:6px;align-items:center}
@@ -107,7 +112,7 @@ section.tabpane.active{display:block}
 
 /* ---------- details (advanced) ---------- */
 details.adv{margin-top:var(--s3);border:1px solid var(--line);border-radius:var(--r-md);background:var(--bg)}
-details.adv > summary{cursor:pointer;padding:10px 12px;font-size:13px;font-weight:600;color:var(--text-dim);list-style:none}
+details.adv > summary{cursor:pointer;padding:11px 13px;font-size:14px;font-weight:600;color:var(--text-dim);list-style:none}
 details.adv > summary::-webkit-details-marker{display:none}
 details.adv > summary:before{content:"▸ ";color:var(--muted)}
 details.adv[open] > summary:before{content:"▾ "}
@@ -122,21 +127,21 @@ details.adv .adv-body{padding:0 12px 12px}
 .panel::-webkit-scrollbar{width:6px;height:6px}.panel::-webkit-scrollbar-thumb{background:var(--line);border-radius:999px}
 .list-empty{padding:var(--s5) 12px;text-align:center;color:var(--muted)}
 .list-empty .ico{font-size:32px;display:block;margin-bottom:var(--s2)}
-.list-empty .t{color:var(--text-dim);font-size:14px}
-.taskitem{display:flex;align-items:center;gap:var(--s2);padding:8px 10px;border-bottom:1px solid #1c2128;font-size:13px}
+.list-empty .t{color:var(--text-dim);font-size:15px}
+.taskitem{display:flex;align-items:center;gap:var(--s2);padding:9px 11px;border-bottom:1px solid #1c2128;font-size:14px}
 .taskitem:last-child{border-bottom:0}
 .taskitem .path{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-dim)}
-.mini{border:1px solid var(--line);background:var(--bg);color:var(--muted);border-radius:var(--r-sm);cursor:pointer;font-size:12px;padding:3px 7px;line-height:1}
+.mini{border:1px solid var(--line);background:var(--bg);color:var(--muted);border-radius:var(--r-sm);cursor:pointer;font-size:13px;padding:4px 8px;line-height:1}
 .mini:hover:not(:disabled){color:var(--text);background:var(--card)}
 .mini:disabled{opacity:.3;cursor:not-allowed}
 .mini.del:hover{color:var(--danger-text);border-color:var(--danger)}
 .diritem{display:flex;align-items:center;gap:var(--s2);padding:8px 10px;border-bottom:1px solid #1c2128;cursor:pointer}
 .diritem:hover{background:var(--card)}
 .diritem:last-child{border-bottom:0}
-.diritem .name{flex:1;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.diritem .added{color:var(--success-text);font-size:12px}
+.diritem .name{flex:1;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.diritem .added{color:var(--success-text);font-size:13px}
 .diritem input[type=checkbox]{width:auto;height:auto}
-.crumbs{display:flex;gap:4px;flex-wrap:wrap;align-items:center;font-size:13px;margin-bottom:var(--s2);color:var(--muted)}
+.crumbs{display:flex;gap:4px;flex-wrap:wrap;align-items:center;font-size:14px;margin-bottom:var(--s2);color:var(--muted)}
 .crumbs .c{cursor:pointer;color:var(--blue)}
 .crumbs .c:hover{text-decoration:underline}
 .crumbs .cur{color:var(--text);font-weight:600}
@@ -144,24 +149,24 @@ details.adv .adv-body{padding:0 12px 12px}
 
 /* ---------- log toolbar / chips ---------- */
 .tblbar{display:flex;gap:var(--s2);flex-wrap:wrap;align-items:center;margin-bottom:var(--s2)}
-.tblbar input[type=text],.tblbar select{background:var(--bg);border:1px solid var(--line);color:var(--text);border-radius:var(--r-md);padding:7px 9px;font-size:12px;height:34px}
+.tblbar input[type=text],.tblbar select{background:var(--bg);border:1px solid var(--line);color:var(--text);border-radius:var(--r-md);padding:7px 10px;font-size:13px;height:36px}
 .tblbar input[type=text]{flex:1;min-width:140px}
 .chips{display:flex;gap:4px;flex-wrap:wrap}
-.chip{border:1px solid var(--line);background:var(--bg);color:var(--muted);border-radius:999px;font-size:11px;padding:3px 9px;cursor:pointer}
+.chip{border:1px solid var(--line);background:var(--bg);color:var(--muted);border-radius:999px;font-size:12px;padding:4px 10px;cursor:pointer}
 .chip.active{background:var(--card);color:var(--text);border-color:var(--blue)}
 
 /* ---------- logs ---------- */
-.logbox{max-height:240px;overflow:auto;padding:12px;background:var(--log-bg);border-radius:var(--r-md);border:1px solid var(--line);font-size:12px;color:var(--muted);white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace}
+.logbox{max-height:420px;overflow:auto;padding:12px;background:var(--log-bg);border-radius:var(--r-md);border:1px solid var(--line);font-size:13px;line-height:1.6;color:var(--muted);white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace}
 .logline{display:block}
 .logline .ts{color:var(--muted)}
 .logline .tx{color:var(--text-dim)}
 .logline.err .tx{color:var(--danger-text)}
 .logline.warn .tx{color:var(--warning-text)}
 .logline.del .tx{color:var(--danger-text);font-weight:700}
-.backlatest{position:sticky;bottom:8px;display:inline-block;background:var(--info-bg);color:#fff;border:0;border-radius:999px;padding:6px 12px;font-size:12px;cursor:pointer}
+.backlatest{position:sticky;bottom:8px;display:inline-block;background:var(--info-bg);color:#fff;border:0;border-radius:999px;padding:6px 13px;font-size:13px;cursor:pointer}
 
 /* ---------- banners / empty / skeleton ---------- */
-.banner{padding:10px 12px;border-radius:var(--r-md);font-size:12px;margin-bottom:var(--s3);border:1px solid}
+.banner{padding:10px 13px;border-radius:var(--r-md);font-size:13px;line-height:1.6;margin-bottom:var(--s3);border:1px solid}
 .banner-warn{background:var(--warning-bg);border-color:var(--warning);color:var(--warning-text)}
 .banner-danger{background:var(--bad-bg);border-color:var(--danger);color:var(--danger-text)}
 .banner-info{background:rgba(88,166,255,.08);border-color:var(--info);color:var(--blue)}
@@ -170,7 +175,7 @@ details.adv .adv-body{padding:0 12px 12px}
 
 /* ---------- toast / modal / busy ---------- */
 #toastRoot{position:fixed;right:18px;bottom:18px;z-index:var(--z-toast);display:flex;flex-direction:column;gap:8px;align-items:flex-end}
-.toast{border-radius:var(--r-lg);padding:11px 14px;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.4);max-width:340px;border:1px solid;cursor:pointer}
+.toast{border-radius:var(--r-lg);padding:11px 15px;font-size:14px;box-shadow:0 8px 24px rgba(0,0,0,.4);max-width:360px;border:1px solid;cursor:pointer}
 .toast.success{background:var(--ok-bg);color:var(--ok-text);border-color:#26a641}
 .toast.error{background:var(--bad-bg);color:var(--bad-text);border-color:var(--danger-bg)}
 .toast.info{background:var(--card);color:var(--text);border-color:var(--line)}
@@ -180,17 +185,17 @@ details.adv .adv-body{padding:0 12px 12px}
 @keyframes fade{from{opacity:0}to{opacity:1}}
 .modal{width:440px;max-width:100%;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-xl);box-shadow:0 16px 48px rgba(0,0,0,.55);padding:18px;animation:rise .12s ease}
 @keyframes rise{from{transform:translateY(8px);opacity:0}to{transform:none;opacity:1}}
-.modal-title{font-size:15px;font-weight:700;color:var(--text);margin-bottom:10px}
-.modal-body{font-size:13px;color:var(--text-dim);line-height:1.7}
+.modal-title{font-size:16px;font-weight:700;color:var(--text);margin-bottom:10px}
+.modal-body{font-size:14px;color:var(--text-dim);line-height:1.7}
 .modal-list{margin:6px 0;padding-left:18px}
 .modal-list li{margin:2px 0}
-.modal-input{width:100%;margin-top:10px;background:var(--bg);border:1px solid var(--line);color:var(--text);border-radius:var(--r-md);padding:9px 11px;font-size:13px;height:36px}
+.modal-input{width:100%;margin-top:10px;background:var(--bg);border:1px solid var(--line);color:var(--text);border-radius:var(--r-md);padding:9px 11px;font-size:14px;height:38px}
 .modal-actions{display:flex;justify-content:flex-end;gap:var(--s2);margin-top:var(--s4)}
 .modal.wide{width:640px}
 .dirpick{max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:var(--r-md);background:var(--bg)}
 .dirpick .diritem:last-child{border-bottom:0}
 #busy{position:fixed;inset:0;z-index:var(--z-busy);display:none;align-items:center;justify-content:center;background:rgba(1,4,9,.35)}
-.busy-inner{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);padding:16px 20px;display:flex;align-items:center;gap:10px;box-shadow:0 8px 24px rgba(0,0,0,.4);font-size:13px}
+.busy-inner{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);padding:16px 20px;display:flex;align-items:center;gap:10px;box-shadow:0 8px 24px rgba(0,0,0,.4);font-size:14px}
 
 /* ---------- responsive ---------- */
 @media(max-width:1199px){.grid,.grid2{grid-template-columns:1fr}}
@@ -219,7 +224,6 @@ details.adv .adv-body{padding:0 12px 12px}
       <div class="perms" id="permBadges"><span class="badge neutral">权限未读取</span></div>
       <div class="tb-spacer"></div>
       <span class="dirty hidden" id="dirtyFlag">● 有未保存的修改</span>
-      <button class="btn btn-primary" id="runBtn">手动扫描</button>
     </div>
     <div class="tb-row">
       <span class="tb-meta">Token 根目录: <span id="tokenRoot">-</span></span>
@@ -311,7 +315,7 @@ details.adv .adv-body{padding:0 12px 12px}
   <!-- ② 运行日志（唯一结果视图；系统运行 / 事件驱动实时清理 / 手动清理日志都汇总在此）-->
   <section class="tabpane active" id="tab-logs">
     <div class="card">
-      <h2>运行日志<span class="spacer"></span><button class="btn btn-ghost btn-sm" id="logCopyBtn">复制</button><button class="btn btn-ghost btn-sm" id="logsBtn">刷新</button><button class="btn btn-danger btn-sm" id="clearLogsBtn">清空</button></h2>
+      <h2>运行日志<span class="spacer"></span><button class="btn btn-primary btn-sm" id="runBtn" title="按当前规则扫描并清理，结果写入下方日志">手动清理</button><button class="btn btn-ghost btn-sm" id="logCopyBtn">复制</button><button class="btn btn-ghost btn-sm" id="logsBtn">刷新</button><button class="btn btn-danger btn-sm" id="clearLogsBtn">清空</button></h2>
       <div class="tblbar">
         <input type="text" id="logSearch" placeholder="按关键字过滤日志…">
         <div class="chips" id="logChips">
@@ -418,14 +422,20 @@ function setConn(state,info,msg){
   else if(state==='fail'){dot.classList.add('fail');txt.textContent='连接失败'+(msg?': '+msg:'')}
   else{txt.textContent='未连接'}
 }
-var PERM=[['list','allowList','allow_list'],['delete','allowDelete','allow_delete'],['perm_delete','allowDeletePermanently','allow_delete_permanently'],['push_message','allowPushMessage','allow_push_message']];
+// 权限徽章：显示名用中文（用户要求），悬浮提示保留 CD2 的 proto 字段名便于到 CD2 侧对照勾选。
+var PERM=[
+  ['列目录','allowList','allow_list','无法读取目录'],
+  ['回收站删除','allowDelete','allow_delete','无法删除到回收站'],
+  ['永久删除','allowDeletePermanently','allow_delete_permanently','无法永久删除'],
+  ['消息推送','allowPushMessage','allow_push_message','事件驱动实时清理不会生效']
+];
 function renderPerms(info){
   var box=el('permBadges');
   if(info&&info.rootDir)el('tokenRoot').textContent=info.rootDir;
   if(!info){box.innerHTML='<span class="badge neutral">权限未读取</span>';return}
   box.innerHTML=PERM.map(function(p){
     var has=!!info[p[1]];
-    var tip=has?'':('缺少 '+p[2]+' → '+({'list':'无法读取目录','delete':'无法删除到回收站','perm_delete':'无法永久删除','push_message':'事件驱动实时清理不会生效'}[p[0]]));
+    var tip=has?('已授予 '+p[2]):('缺少 '+p[2]+' → '+p[3]);
     return '<span class="badge '+(has?'ok':'bad')+'" title="'+esc(tip)+'">'+p[0]+'</span>';
   }).join('');
 }
@@ -458,7 +468,7 @@ function updateNextAction(){
   var a='';
   if(!lastToken)a='建议：先到「① 连接 · 目录 · 规则」测试连接';
   else if(taskList().length<1)a='建议：添加至少 1 个清理目录';
-  else if(!lastScan)a='建议：点「手动扫描」执行一次';
+  else if(!lastScan)a='建议：到「② 运行日志」点「手动清理」执行一次';
   else if(!checked('allowDelete'))a='当前为预览模式：勾选「允许自动清理」后才会真正删除';
   else a='一切就绪，正在按规则运行';
   el('nextAction').textContent=a;
@@ -497,7 +507,7 @@ function taskListAction(act,i){
 }
 el('taskList').addEventListener('click',function(e){var b=e.target.closest('.mini');if(b)taskListAction(b.dataset.act,parseInt(b.dataset.i,10))});
 function addTask(p){var t=taskList();if(t.indexOf(p)>=0){toast('该目录已在列表中，未重复添加','warn');return}t.push(p);setTaskList(t);setDirty(true);toast('已添加目录 '+p,'success')}
-function guardEmptyTasks(){var empty=taskList().length===0;var b=el('runBtn');b.disabled=empty;b.title=empty?'尚未配置任何清理目录：请先到「① 连接 · 目录 · 规则」添加目录':'手动扫描（预览，或在开启「允许自动清理」时按规则删除）';}
+function guardEmptyTasks(){var empty=taskList().length===0;var b=el('runBtn');b.disabled=empty;b.title=empty?'尚未配置任何清理目录：请先到「① 连接 · 目录 · 规则」添加目录':'手动清理（未开启「允许自动清理」时只扫描不删除）';}
 
 /* ---------- directory picker (modal) ---------- */
 var dirPick={path:'/',open:false};
@@ -616,8 +626,7 @@ function testConn(){
   else go();
 }
 
-/* ---------- scan / clean ---------- */
-/* ---------- 扫描清理（合并原「扫描预览」与「执行清理」为单一动作）---------- */
+/* ---------- 手动清理（扫描与删除合并为单一动作）---------- */
 function validTime(v){
   if(!v)return null;
   var d=(v instanceof Date)?v:new Date(v);
@@ -643,17 +652,17 @@ function renderRunMeta(){
 }
 function doRun(){
   if(taskList().length===0){toast('请先添加清理目录','error');switchTab('config');return}
-  // 未开启删除总开关 → 只做扫描预览，不弹删除确认（避免「说要删却什么都没删」的困惑）。
+  // 未开启删除总开关 → 只扫描不删除，不弹删除确认（避免「说要删却什么都没删」的困惑）。
   if(!checked('allowDelete')){executeRun(false);return}
   var permanent=checked('deletePermanently');
   var body='<ul class="modal-list">'
-    +'<li>将按当前规则手动扫描并 <b>删除</b> 命中的垃圾文件</li>'
+    +'<li>将按当前规则手动清理，<b>删除</b>命中的垃圾文件</li>'
     +'<li>删除方式：'+(permanent?'<b class="danger-text">永久删除，不进回收站，不可恢复</b>':'进网盘回收站（可恢复）')+'</li>'
     +'<li>涉及 '+taskList().length+' 个目录</li>'
     +'<li>单轮上限 '+esc(val('maxFilesPerRun'))+' 个 / '+esc(val('maxTotalBytes'))+' GiB</li></ul>'
-    +'<div class="banner banner-warn">手动扫描与删除在同一轮完成：点「确认」后立即按规则删除，不再有二次确认。</div>';
+    +'<div class="banner banner-warn">扫描与删除在同一轮完成：点「确认」后立即按规则删除，不再有二次确认。</div>';
   if(permanent)body+='<div class="banner banner-danger">永久删除不可恢复，请谨慎确认。</div>';
-  confirmDialog({title:permanent?'确认手动扫描并永久删除？':'确认手动扫描并清理？',bodyHtml:body,okText:permanent?'永久删除':'扫描并清理',confirmWord:permanent?'DELETE':null}).then(function(ok){if(ok)executeRun(true)});
+  confirmDialog({title:permanent?'确认手动清理并永久删除？':'确认手动清理？',bodyHtml:body,okText:permanent?'永久删除':'开始清理',confirmWord:permanent?'DELETE':null}).then(function(ok){if(ok)executeRun(true)});
 }
 function executeRun(doDelete){
   var go=function(){
@@ -662,7 +671,7 @@ function executeRun(doDelete){
     api(doDelete?'/api/clean':'/api/scan').then(function(j){
       lastScan=j;lastScanTime=new Date();
       renderRunMeta();
-      toast(doDelete?('清理完成：删除 '+j.deleted+' 个'):('手动扫描完成：命中 '+j.matched+' 个'+(checked('allowDelete')?'':'（预览模式，未删除）')),'success');
+      toast(doDelete?('手动清理完成：删除 '+j.deleted+' 个'):('手动清理完成（未开启删除总开关，仅扫描）：命中 '+j.matched+' 个'),'success');
       // 日志是现在唯一的结果视图：切过去并刷新，让本轮明细立即可见。
       switchTab('logs');
       loadLogs().catch(function(){});
@@ -736,14 +745,27 @@ el('clearLogsBtn').addEventListener('click',function(){
 });
 // 勾选/取消「事件驱动实时清理」：立即刷新提示（后端订阅在保存配置后才真正启停）。
 el('enablePush').addEventListener('change',function(){renderPush()});
-// 删除总开关/永久删除变化会改变「手动扫描」的语义与顶栏提示，立即刷新。
+// 删除总开关/永久删除变化会改变「手动清理」的语义与结果摘要，立即刷新。
 el('allowDelete').addEventListener('change',function(){renderRunMeta();updateNextAction()});
 el('deletePermanently').addEventListener('change',function(){renderRunMeta()});
 window.addEventListener('beforeunload',function(e){if(dirty){e.preventDefault();e.returnValue=''}});
 
 /* ---------- push 状态 / 最近结果（自动呈现后台动作）---------- */
 function loadPush(){
-  return api('/api/push?_='+Date.now()).then(function(j){renderPush(j.push)});
+  return api('/api/push?_='+Date.now()).then(function(j){
+    renderPush(j.push);
+    // 运行状态（含 Token 权限）由后端在「启动自检 / 保存自检 / 订阅成功」时写入，
+    // 前端据此自动点亮连接状态与权限徽章——用户不必再手点一次「测试连接」。
+    if(j.status){
+      lastToken=j.status.token||null;
+      if(lastToken){renderPerms(lastToken);setConn('ok',lastToken)}
+      else{
+        var m=String(j.status.last_message||'');
+        if(m.indexOf('未连接')===0){renderPerms(null);setConn('fail',null,m.replace(/^未连接:\s*/,''))}
+        else{renderPerms(null);setConn('none')}
+      }
+    }
+  });
 }
 function loadLastScan(){
   return api('/api/last_scan?_='+Date.now()).then(function(j){

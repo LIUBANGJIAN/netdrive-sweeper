@@ -122,7 +122,7 @@ func TestWebStaticMarkers_PushStatusSingleSourceOfTruth(t *testing.T) {
 }
 
 // TestWebStaticMarkers_ConsolidatedUI 守护二次精简后的形态：
-// 两页式（① 连接·目录·规则 / ② 运行日志）、顶栏唯一主操作「手动扫描」、
+// 两页式（① 连接·目录·规则 / ② 运行日志）、主操作「手动清理」收敛到运行日志卡片标题栏、
 // 保存入口收敛到配置页（saveBtn2）、日志是唯一结果视图；扫描结果表与清理记录已删除。
 func TestWebStaticMarkers_ConsolidatedUI(t *testing.T) {
 	mustContain := []string{
@@ -133,6 +133,11 @@ func TestWebStaticMarkers_ConsolidatedUI(t *testing.T) {
 		`id="logsBox"`,
 		`id="lastRunMeta"`,
 		`function doRun(){`,
+		`手动清理`, // 主操作按钮已更名，且只出现在「② 运行日志」卡片标题栏
+		`列目录`,  // 权限徽章中文化（原 list / delete / perm_delete / push_message）
+		`回收站删除`,
+		`永久删除`,
+		`消息推送`,
 	}
 	for _, m := range mustContain {
 		if !strings.Contains(pageHTML, m) {
@@ -140,6 +145,9 @@ func TestWebStaticMarkers_ConsolidatedUI(t *testing.T) {
 		}
 	}
 	mustNotContain := map[string]string{
+		"旧按钮文案-手动扫描": `手动扫描`,
+		"旧术语-扫描预览":  `扫描预览`,
+		"旧术语-执行清理":  `执行清理`,
 		"顶栏旧保存按钮": `id="saveBtn"`,
 		"旧页签-run": `id="tab-run"`,
 		"旧执行摘要":   `id="runMeta"`,

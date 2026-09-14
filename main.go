@@ -89,6 +89,9 @@ func main() {
 	// 事件驱动实时清理（P0-27）：常驻订阅 CD2 PushMessage，是替代定时轮询的唯一合法实时感知方式。
 	// 由 pushSupervisor 统一管理：配置一旦保存即热启动 / 热重启，无需重启容器。
 	go pushSupervisor(rootCtx)
+	// 启动即自检 CD2 连接与 Token 权限：这样容器启动 / 更新镜像后，页面无需手动点
+	// 「测试连接」就能显示连接状态与权限徽章。
+	go statusProbeLoop(rootCtx)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleIndex)
 	mux.HandleFunc("/api/state", handleState)
@@ -179,6 +182,12 @@ func handleSave(w http.ResponseWriter, r *http.Request) {
 	appendLog("配置已保存（限速 %.1f ops/s，删除方式 %s）", next.OpsPerSec, map[bool]string{true: "永久", false: "回收站"}[next.DeletePermanently])
 	// 唤醒事件驱动监督器：地址 / Token / 开关 / 防抖任一变化都会热重启订阅，无需重启容器。
 	wakePushSupervisor()
+	// 保存后立刻自检一次连接与权限：用户改完地址/Token 无需再手点「测试连接」。
+	go func(c Config) {
+		if _, err := probeCD2Status(rootCtx, c); err != nil {
+			appendLog("保存后自检：CD2 暂不可达（%v）", err)
+		}
+	}(next)
 	writeJSON(w, map[string]any{"ok": true, "config": next})
 }
 
@@ -237,7 +246,7 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("未配置任何目录，请先在「连接与目录」中添加要清理的目录"))
 		return
 	}
-	appendLog("手动扫描开始（预览，不删除）")
+	appendLog("手动清理开始（仅扫描，未开启删除总开关）")
 	res, err := runScan(r.Context(), false)
 	if err != nil {
 		writeError(w, err)
@@ -256,7 +265,7 @@ func handleClean(w http.ResponseWriter, r *http.Request) {
 	if currentConfig().DeletePermanently {
 		delMode = "永久删除"
 	}
-	appendLog("手动扫描开始（删除方式：%s）", delMode)
+	appendLog("手动清理开始（删除方式：%s）", delMode)
 	res, err := runScan(r.Context(), true)
 	if err != nil {
 		writeError(w, err)
@@ -292,11 +301,14 @@ func handleLastScan(w http.ResponseWriter, r *http.Request) {
 }
 
 // handlePush 返回事件驱动订阅的实时状态（纯内存读取，供前端轻量轮询）。
+// 同时附带运行状态（含 Token 权限），使页面徽章在启动自检/保存自检后自动亮起，
+// 不再需要用户手动点一次「测试连接」。
 func handlePush(w http.ResponseWriter, r *http.Request) {
 	stateMu.Lock()
 	at := lastScanAt
+	s := statusInfo
 	stateMu.Unlock()
-	writeJSON(w, map[string]any{"ok": true, "push": pushSnapshot(), "lastScanAt": at})
+	writeJSON(w, map[string]any{"ok": true, "push": pushSnapshot(), "lastScanAt": at, "status": s})
 }
 
 func handleClearLogs(w http.ResponseWriter, r *http.Request) {
@@ -482,10 +494,12 @@ func runPushConsumer(ctx context.Context, c Config) {
 		if !token.AllowPushMessage {
 			client.Close()
 			setPushState("denied", "Token 缺少 allow_push_message 权限，事件驱动不生效")
-			appendLog("Token 缺少 allow_push_message 权限，事件驱动实时清理不可用（不影响手动扫描）。" +
+			appendLog("Token 缺少 allow_push_message 权限，事件驱动实时清理不可用（不影响手动清理）。" +
 				"在 CD2 为该 Token 勾选该权限后回本页「保存配置」即可生效，无需重启容器")
 			return
 		}
+		// 订阅成功即顺手刷新运行状态（含权限徽章），用的是本次已经取到的 Token，不额外发请求。
+		setStatus("已连接: "+token.RootDir, token)
 		p := newPushConsumer(client, debounce, func() {
 			appendLog("收到文件系统变更事件，防抖后触发扫描")
 			// runScan 自带 scanBusy 互斥，进行中会返回「已有扫描任务」错误。
@@ -511,6 +525,58 @@ func pushDisabledReason(c Config) string {
 		return "未启用（已关闭「事件驱动实时清理」）"
 	}
 	return "未启用：CD2 地址或 Token 未配置"
+}
+
+// permSummary 把 Token 权限汇成一行中文，用于日志与自检输出。
+func permSummary(t *TokenInfo) string {
+	if t == nil {
+		return "未知"
+	}
+	yn := func(b bool) string {
+		if b {
+			return "有"
+		}
+		return "无"
+	}
+	return fmt.Sprintf("列目录=%s 回收站删除=%s 永久删除=%s 消息推送=%s",
+		yn(t.AllowList), yn(t.AllowDelete), yn(t.AllowDeletePermanently), yn(t.AllowPushMessage))
+}
+
+// probeCD2Status 主动探测一次 CD2（TCP + TokenInfo）并写入运行状态。
+// 一次探测 = 1 次 TCP 连通性 + 1 次 TokenInfo，不构成任何「定时扫全树」循环。
+func probeCD2Status(ctx context.Context, c Config) (*TokenInfo, error) {
+	client, token, err := connectPushClient(ctx, c)
+	if err != nil {
+		setStatus("未连接: "+formatCD2Error(err).Error(), nil)
+		return nil, err
+	}
+	client.Close()
+	setStatus("已连接: "+token.RootDir, token)
+	return token, nil
+}
+
+// statusProbeLoop 启动自检：成功即结束；失败则 20s 后再试一次，
+// 以覆盖「CD2 比本容器启动得晚」这一常见顺序问题。只探测两次，绝不无限重试。
+func statusProbeLoop(ctx context.Context) {
+	for attempt := 0; attempt < 2; attempt++ {
+		if ctx.Err() != nil {
+			return
+		}
+		c := currentConfig()
+		if normalizeAddress(c.Address) == "" || strings.TrimSpace(c.Token) == "" {
+			appendLog("启动自检跳过：CD2 地址或 Token 未配置")
+			return
+		}
+		token, err := probeCD2Status(ctx, c)
+		if err == nil {
+			appendLog("启动自检：CD2 连接正常，Token 根目录 %s；权限 %s", token.RootDir, permSummary(token))
+			return
+		}
+		appendLog("启动自检：CD2 暂不可达（%v）", err)
+		if !waitOrDone(ctx, 20*time.Second) {
+			return
+		}
+	}
 }
 
 // connectPushClient 建立并校验一次 PushMessage 订阅所需的连接（TCP 探测 + Token 校验）。
