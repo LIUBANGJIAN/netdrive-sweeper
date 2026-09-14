@@ -84,8 +84,8 @@ func TestNormalizeConfig(t *testing.T) {
 	if c.MaxFilesPerRun != 2000 {
 		t.Fatalf("MaxFilesPerRun should clamp to 2000, got %v", c.MaxFilesPerRun)
 	}
-	if c.FileCooldownHours != 6 {
-		t.Fatalf("FileCooldownHours should clamp to 6, got %v", c.FileCooldownHours)
+	if c.FileCooldownHours != 0 {
+		t.Fatalf("FileCooldownHours should clamp to 0, got %v", c.FileCooldownHours)
 	}
 	if c.PushDebounceSeconds != 5 {
 		t.Fatalf("PushDebounceSeconds should clamp to default 5, got %v", c.PushDebounceSeconds)

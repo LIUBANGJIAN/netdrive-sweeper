@@ -127,9 +127,9 @@ func TestQA_NormalizeConfig_Clamps(t *testing.T) {
 		}
 	}
 
-	// FileCooldownHours: [0, 168]，越界回退 6
+	// FileCooldownHours: [0, 168]，越界回退 0
 	for _, c := range []struct{ in, want int }{
-		{-1, 6}, {0, 0}, {168, 168}, {169, 6},
+		{-1, 0}, {0, 0}, {168, 168}, {169, 0},
 	} {
 		if got := normalizeConfig(Config{FileCooldownHours: c.in}).FileCooldownHours; got != c.want {
 			t.Errorf("FileCooldownHours(%d)=%d want %d", c.in, got, c.want)

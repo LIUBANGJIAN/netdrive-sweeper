@@ -48,7 +48,7 @@ func defaultConfig() Config {
 		Burst:               10,
 		MaxFilesPerRun:      2000,
 		MaxTotalBytes:       10 << 30, // 10 GiB
-		FileCooldownHours:   6,
+		FileCooldownHours:   0,        // 0 = 立即清理（已拍板：不再默认冷却 6h）
 		EnablePush:          true,
 		PushDebounceSeconds: 5,
 		IncompleteSuffixes:  ".part,.download,.!qB,.bc!,.aria2,.crdownload,.td,.tmp,.!ut",
@@ -79,7 +79,7 @@ func normalizeConfig(c Config) Config {
 	case c.MaxDepth > 100:
 		c.MaxDepth = 100
 	}
-	c.FileCooldownHours = clampInt(c.FileCooldownHours, 0, 168, 6)
+	c.FileCooldownHours = clampInt(c.FileCooldownHours, 0, 168, 0)
 	c.PushDebounceSeconds = clampInt(c.PushDebounceSeconds, 1, 120, 5)
 	// 防呆：未完成后缀被清空会静默废掉「含未完成后缀则整目录跳过」这道保险丝（P0-23）。
 	if strings.TrimSpace(c.IncompleteSuffixes) == "" {

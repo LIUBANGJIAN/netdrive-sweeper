@@ -329,7 +329,7 @@ table.tbl .mark{width:44px;text-align:center}
         <div class="formgroup"><label>视频后缀</label><input id="videoExts" value=".mp4,.mkv,.ts"><div class="help">配合下方阈值按体积判定</div></div>
         <div class="formgroup"><label>小视频阈值 MB</label><input id="sizeLimit" type="number" step="0.1" value="20"><div class="help">视频后缀且体积 ≤ 此值即命中。默认 20 MB</div></div>
         <div class="formgroup"><label>限速 ops/秒</label><input id="opsPerSec" type="number" step="0.1" value="5"><div class="help warn">每次 gRPC 调用前取令牌。默认 5，对齐 115 官方上限，调高会增加风控风险</div></div>
-        <div class="formgroup"><label>文件冷却小时</label><input id="cooldown" type="number" value="6"><div class="help">新文件在冷却期内跳过，保护刚到达的文件。默认 6 小时</div></div>
+        <div class="formgroup"><label>文件冷却小时</label><input id="cooldown" type="number" value="0"><div class="help">设为 0 = 立即清理（发现即删）；设置 >0 则新文件在该冷却期内跳过。默认 0</div></div>
         <div class="formgroup"><label>排除关键词</label><input id="excludeDirs" value="重要,备份"><div class="help">目录名包含任一关键词即整目录跳过。重要目录务必填入</div></div>
         <div class="formgroup"><label>推送防抖秒数</label><input id="pushDebounce" type="number" value="5"><div class="help">事件驱动下合并突发变更的静默窗口。默认 5 秒（修改后需重启生效）</div></div>
         <div class="formgroup"><label>未完成后缀</label><input id="incompleteSuffixes" value=".part,.download,.!qB,.bc!,.aria2,.crdownload,.td,.tmp,.!ut"><div class="help">含这些后缀的目录整目录跳过。留空会自动回填默认值，不建议清空</div></div>

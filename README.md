@@ -25,7 +25,7 @@
 4. **删除默认进网盘回收站**：默认调用 `DeleteFile`（进回收站，可恢复）；永久删除需显式开启 `delete_permanently`。
 5. **多重保险丝**：
    - **删除总开关** `allow_delete` 默认关闭，不开则不执行任何删除；
-   - **单文件冷却**：`file_cooldown_hours` 内的新文件跳过（保护刚到达的文件）；
+   - **单文件冷却**：`file_cooldown_hours` 大于 0 时，新写入未满该小时数的文件跳过（默认 `0` = 立即清理，不冷却）；
    - **未完成下载保护**：目录含 `.part`/`.!qB`/`.crdownload` 等未完成后缀时**整目录跳过**；
    - **单轮上限** `max_files_per_run`，达上限即中止本轮；
    - **Token 权限自检**：缺 `allow_delete` 等权限时直接拒绝执行并报错。
@@ -157,7 +157,7 @@ go build -o netdrive-sweeper .
 | `burst` | `10` | 令牌桶突发容量 |
 | `max_files_per_run` | `2000` | 单轮删除文件数上限（保险丝） |
 | `max_total_bytes` | `10 GiB` | 单轮删除总字节上限 |
-| `file_cooldown_hours` | `6` | 新文件冷却小时数（保护刚到达的文件） |
+| `file_cooldown_hours` | `0` | 新文件冷却小时数，`0` = 立即清理（不冷却），`>0` 时写入未满该小时的文件会被跳过 |
 | `incomplete_suffixes` | `.part,.download,.!qB,.bc!,.aria2,.crdownload,.td,.tmp,.!ut` | 含这些后缀的目录会被整目录跳过；留空将自动回填默认值，该保护不建议关闭 |
 | `force_refresh` | `false` | 强制刷新 CD2 缓存（每次 `GetSubFiles` 绕过缓存回源网盘）；非必要不建议开启，会放大网盘请求量 |
 | `enable_push` | `true` | 启用 PushMessage 事件驱动 |
@@ -181,7 +181,7 @@ go build -o netdrive-sweeper .
 | 「CD2 不可达」 | CD2 未启动 / gRPC 未开启 / 端口不是 19798；**桥接模式下地址填了 `127.0.0.1` 也会不可达**，需改填宿主机内网 IP 或 `host.docker.internal:19798` |
 | 「Token 无效或过期」 | Token 复制不完整，或已在 CD2 侧失效 |
 | 「Token 权限不足」 | 缺 `allow_list` / `allow_delete` / `allow_push_message`，回到 CD2 重新勾选 |
-| 勾选了清理但没删掉 | 删除总开关 `allow_delete` 未开，或文件在冷却期，或目录含未完成后缀 |
+| 勾选了清理但没删掉 | 删除总开关 `allow_delete` 未开，或 `file_cooldown_hours` 大于 0 且文件仍在冷却期，或目录含未完成后缀 |
 | 事件驱动不生效 | Token 缺 `allow_push_message`，或 `enable_push` 未开（不影响手动扫描） |
 | 日志里大量「跳过未完成离线目录」 | 该目录离线任务未完成，属正常保护 |
 
