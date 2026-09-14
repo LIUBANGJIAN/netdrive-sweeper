@@ -18,7 +18,7 @@ const pageHTML = `<!doctype html>
 --warning:#d29922;--warning-bg:#2d1a05;--warning-text:#f0c674;--info:#58a6ff;--info-bg:#0969da;--info-hover:#0d6eaf;
 --ok-bg:#0e4429;--ok-text:#6ee7b7;--bad-bg:#490202;--bad-text:#ff7b72;
 --r-sm:6px;--r-md:8px;--r-lg:12px;--r-xl:16px;--s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:24px;--s6:32px;
---z-header:100;--z-busy:200;--z-modal:300;--z-toast:400}
+--z-header:100;--z-modal:300;--z-toast:400}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text);font-size:15px;min-height:100vh}
 h1,h2,h3{margin:0}
@@ -173,7 +173,7 @@ details.adv .adv-body{padding:0 12px 12px}
 .skel{display:inline-block;min-width:44px;height:12px;border-radius:4px;background:linear-gradient(90deg,var(--card),#2b313a,var(--card));background-size:200% 100%;animation:sk 1.2s linear infinite;vertical-align:middle}
 @keyframes sk{0%{background-position:200% 0}100%{background-position:-200% 0}}
 
-/* ---------- toast / modal / busy ---------- */
+/* ---------- toast / modal ---------- */
 #toastRoot{position:fixed;right:18px;bottom:18px;z-index:var(--z-toast);display:flex;flex-direction:column;gap:8px;align-items:flex-end}
 .toast{border-radius:var(--r-lg);padding:11px 15px;font-size:14px;box-shadow:0 8px 24px rgba(0,0,0,.4);max-width:360px;border:1px solid;cursor:pointer}
 .toast.success{background:var(--ok-bg);color:var(--ok-text);border-color:#26a641}
@@ -194,8 +194,6 @@ details.adv .adv-body{padding:0 12px 12px}
 .modal.wide{width:640px}
 .dirpick{max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:var(--r-md);background:var(--bg)}
 .dirpick .diritem:last-child{border-bottom:0}
-#busy{position:fixed;inset:0;z-index:var(--z-busy);display:none;align-items:center;justify-content:center;background:rgba(1,4,9,.35)}
-.busy-inner{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);padding:16px 20px;display:flex;align-items:center;gap:10px;box-shadow:0 8px 24px rgba(0,0,0,.4);font-size:14px}
 
 /* ---------- responsive ---------- */
 @media(max-width:1199px){.grid,.grid2{grid-template-columns:1fr}}
@@ -333,7 +331,6 @@ details.adv .adv-body{padding:0 12px 12px}
 
 <div id="modalRoot"></div>
 <div id="toastRoot"></div>
-<div id="busy"><div class="busy-inner"><span class="spinner dark"></span><span id="busyText">运行中…</span></div></div>
 <input id="tasksHidden" type="hidden">
 <script>
 var state={},dirty=false,lastScan=null,lastScanTime='',lastToken=null,savedOnce=false;

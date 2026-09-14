@@ -104,18 +104,38 @@ func (p *pushConsumer) handle(messageType int32) {
 		return
 	}
 	bumpPushEvent()
+
+	// 关键：把「读取 firstEventAt 做决策」与「创建 / 取消定时器」放在同一次持锁内完成，
+	// 消除「解锁后再 schedule」与上一次定时器的 fire() 交错（fire 清空 firstEventAt 并置空
+	// timer、handle 又新建一个）导致同一突发事件多触发一轮扫描的竞态窗口。
 	p.mu.Lock()
 	if p.firstEventAt.IsZero() {
 		p.firstEventAt = time.Now()
 	}
-	capped := time.Since(p.firstEventAt) >= p.maxDelay
-	p.mu.Unlock()
-
-	if capped {
-		p.fire()
+	if time.Since(p.firstEventAt) >= p.maxDelay {
+		// 达到最大延迟上限：锁内清空突发状态并停掉待触发定时器，解锁后立即异步触发。
+		p.firstEventAt = time.Time{}
+		if p.timer != nil {
+			p.timer.Stop()
+			p.timer = nil
+		}
+		p.mu.Unlock()
+		p.asyncTrigger()
 		return
 	}
-	p.schedule(p.debounce)
+	// 未达上限：锁内按 debounce 顺延重建定时器。
+	p.scheduleLocked(p.debounce)
+	p.mu.Unlock()
+}
+
+// asyncTrigger 在独立 goroutine 中触发一次 trigger，绝不阻塞订阅流。
+// 作为「立即触发」路径的公共出口（定时器回调路径仍走 fire，见其幂等守卫）。
+func (p *pushConsumer) asyncTrigger() {
+	go func() {
+		if p.trigger != nil {
+			p.trigger()
+		}
+	}()
 }
 
 // fire 取消待触发的定时器并立即触发一次 trigger。
@@ -140,14 +160,20 @@ func (p *pushConsumer) fire() {
 	}()
 }
 
-// schedule 以新的延迟重建防抖定时器（先停掉旧 timer）。
-func (p *pushConsumer) schedule(d time.Duration) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+// scheduleLocked 以新的延迟重建防抖定时器（先停掉旧 timer）。
+// 调用方必须已持有 p.mu —— 供 handle 在同一次持锁内完成「决策 + 重建定时器」。
+func (p *pushConsumer) scheduleLocked(d time.Duration) {
 	if p.timer != nil {
 		p.timer.Stop()
 	}
 	p.timer = time.AfterFunc(d, p.fire)
+}
+
+// schedule 以新的延迟重建防抖定时器（取锁后转调 scheduleLocked）。
+func (p *pushConsumer) schedule(d time.Duration) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.scheduleLocked(d)
 }
 
 // rearm 用于「本轮突发未真正被处理」（如扫描互斥）：把突发起点重置为现在并按 debounce 重新计时，
@@ -155,8 +181,8 @@ func (p *pushConsumer) schedule(d time.Duration) {
 func (p *pushConsumer) rearm() {
 	p.mu.Lock()
 	p.firstEventAt = time.Now()
+	p.scheduleLocked(p.debounce)
 	p.mu.Unlock()
-	p.schedule(p.debounce)
 }
 
 // run 常驻订阅直到 ctx 取消。订阅断开后按固定退避重连（重连退避不是扫描循环，允许）。

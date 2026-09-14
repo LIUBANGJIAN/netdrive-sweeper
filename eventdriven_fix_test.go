@@ -164,10 +164,13 @@ func TestStatusMonitor_ReturnsOnContextCancel(t *testing.T) {
 // ---------- C 回归：页面不再有秒级计时 / 全屏遮罩，且具备运行期实时滚动 ----------
 
 func TestWebStaticMarkers_NoRunElapsedTimer(t *testing.T) {
-	// 反回归：旧的秒级计时与 #busy 全屏遮罩必须彻底移除。
-	for _, bad := range []string{"已耗时", "setInterval(tickRun", "function tickRun(", "el('busyText')", "el('busy').style.display"} {
+	// 反回归：旧的秒级计时与 #busy 全屏遮罩（元素/CSS/JS）必须彻底移除。
+	for _, bad := range []string{
+		"已耗时", "setInterval(tickRun", "function tickRun(", "el('busyText')",
+		"el('busy').style.display", `id="busy"`, "busy-inner", "--z-busy",
+	} {
 		if strings.Contains(pageHTML, bad) {
-			t.Fatalf("pageHTML 不应再包含旧计时/遮罩逻辑 %q", bad)
+			t.Fatalf("pageHTML 不应再包含旧计时/遮罩残留 %q", bad)
 		}
 	}
 	// 正向：运行期日志实时滚动必须在位。
