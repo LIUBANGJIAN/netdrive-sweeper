@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -50,18 +51,39 @@ type PushRuntime struct {
 	LastEventPath string        `json:"lastEventPath,omitempty"` // 最近一次文件系统变更事件的路径（尽力而为提取）
 	LastMessageAt string        `json:"lastMessageAt,omitempty"` // 最近一次收到任意类型推送消息的时间（订阅存活证据）
 	TypeCounts    map[int32]int `json:"typeCounts,omitempty"`    // 各 messageType 的累计到达次数
+
+	// —— 存活可观测性（D5）：让前端能区分「流活着但恰好没事件」与「流已经死了」 ——
+	Gen          int64  `json:"gen"`                    // 当前订阅世代（每次起/重启 +1；用于识别过期写入）
+	SubscribedAt string `json:"subscribedAt,omitempty"` // 本次订阅最近一次成功进入 running 的时间
+	Reconnects   int    `json:"reconnects"`             // 订阅中断后的重连计数
+	LastError    string `json:"lastError,omitempty"`    // 最近一次订阅失败原因（已脱敏，绝不写 Token 明文）
+	LastErrorAt  string `json:"lastErrorAt,omitempty"`  // 最近一次订阅失败时间
 }
 
 var (
 	pushMu   sync.Mutex
 	pushStop context.CancelFunc // 当前订阅的取消函数；nil 表示没有在跑
 	pushSig  string             // 当前订阅启动时对应的配置指纹
+	// pushDone 由监督器在启动消费者时创建、并在同一临界区内赋值；消费者退出时关闭它。
+	// 它是「自称在跑、其实已死」的唯一可信判据（D2 看门狗）：pushStop 非 nil 但 pushDone 已关闭
+	// ⇒ 消费者 goroutine 已意外退出，监督器应立即重建订阅（最迟 20s 自愈）。
+	pushDone chan struct{}
 	pushWake = make(chan struct{}, 1)
 	pushStat = PushRuntime{State: "off", Detail: "未启用"}
 	// pushRev 每次保存配置 +1，使订阅指纹必然变化 → 触发热重启。
 	// 这样「在 CD2 里给 Token 补上 allow_push_message 后回页面保存」即可生效，无需重启容器。
 	pushRev atomic.Int64
+	// pushGen 是订阅世代计数器：每次起/重启消费者 +1。用于世代守卫（D1/D3）——
+	// 旧世代 goroutine 的收尾（如 setPushState("off")）不得覆盖新世代写入的 running。
+	pushGen atomic.Int64
 )
+
+// pushLaunch 是「启动一个消费者 goroutine」的间接层（默认即 go runPushConsumer）。
+// 抽成变量是为了让单测能注入假消费者，从而确定性地验证看门狗（D2）的“死亡→重建”行为，
+// 而无需真的去连 CD2。生产路径行为完全一致。
+var pushLaunch = func(ctx context.Context, c Config, gen int64, done chan struct{}) {
+	go runPushConsumer(ctx, c, gen, done)
+}
 
 // 应用级根上下文：用于常驻的 PushMessage 事件驱动订阅，随进程生命周期存续。
 var (
@@ -423,6 +445,90 @@ func setPushStateLocked(state, detail string) {
 	pushStat.Since = time.Now().Format("2006-01-02 15:04:05")
 }
 
+// setPushStateIfGen 是「世代守卫」的状态写入：仅当 gen 仍是当前世代时才写，否则丢弃并返回 false。
+// 用于消费者 goroutine 的所有状态写入（D1/D3）：旧世代在订阅被热重启后仍可能异步收尾，
+// 若不加守卫，它写的 "off/订阅已结束" 会覆盖新世代刚写下的 "running"，导致 UI 无故翻成已停止。
+// 进入 running 时顺带记录 SubscribedAt（本次订阅最近一次建立时间），供前端展示「已建立 Xm」。
+func setPushStateIfGen(state, detail string, gen int64) bool {
+	if gen != pushGen.Load() {
+		return false // 快速路径：早已过期
+	}
+	pushMu.Lock()
+	defer pushMu.Unlock()
+	if gen != pushGen.Load() { // 取锁后世代可能已前进，二次确认
+		return false
+	}
+	now := time.Now().Format("2006-01-02 15:04:05")
+	pushStat.State = state
+	pushStat.Detail = detail
+	pushStat.Since = now
+	pushStat.Gen = gen
+	if state == "running" {
+		pushStat.SubscribedAt = now
+	}
+	return true
+}
+
+// markPushReconnect 记录订阅重连计数（世代守卫）：仅当前世代写入。
+func markPushReconnect(gen int64, reconnects int) {
+	if gen != pushGen.Load() {
+		return
+	}
+	pushMu.Lock()
+	defer pushMu.Unlock()
+	if gen != pushGen.Load() {
+		return
+	}
+	pushStat.Gen = gen
+	pushStat.Reconnects = reconnects
+}
+
+// markPushLastError 记录最近一次订阅失败原因（世代守卫）。调用方须传入已脱敏的文本
+// （如 formatCD2Error 的结果），绝不写 Token 明文。
+func markPushLastError(gen int64, msg string) {
+	if msg == "" {
+		return
+	}
+	if gen != pushGen.Load() {
+		return
+	}
+	pushMu.Lock()
+	defer pushMu.Unlock()
+	if gen != pushGen.Load() {
+		return
+	}
+	pushStat.LastError = msg
+	pushStat.LastErrorAt = time.Now().Format("2006-01-02 15:04:05")
+}
+
+// chanClosed 无阻塞判断一个 channel 是否已关闭（或将被 GC 的空通道视为未关闭）。
+func chanClosed(ch chan struct{}) bool {
+	if ch == nil {
+		return false
+	}
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
+}
+
+// pushWatchdogLocked 是 D2 看门狗的核心判据：当「自称在跑」（pushStop != nil）但消费者
+// goroutine 已退出（pushDone 已关闭）时，清空在跑标记并返回 (已死世代, true)，表示需要重建。
+// 调用方必须持有 pushMu。抽成独立函数便于单测确定性地验证「死亡→重建」的判定。
+func pushWatchdogLocked() (deadGen int64, dead bool) {
+	if pushStop != nil && pushDone != nil && chanClosed(pushDone) {
+		deadGen = pushStat.Gen
+		pushStop()
+		pushStop = nil
+		pushSig = ""
+		pushDone = nil
+		return deadGen, true
+	}
+	return 0, false
+}
+
 // bumpPushEvent 记录一次文件系统变更事件。
 func bumpPushEvent() {
 	pushMu.Lock()
@@ -486,12 +592,21 @@ func pushSupervisor(ctx context.Context) {
 		want := c.EnablePush && normalizeAddress(c.Address) != "" && strings.TrimSpace(c.Token) != ""
 		sig := pushConfigSignature(c)
 
+		deadLog := "" // 看门狗判定“假运行”时的诊断行（锁外记，避免持锁写日志）
 		pushMu.Lock()
 		running := pushStop != nil
+		// D2 看门狗：自称在跑，但消费者 goroutine 已退出（done 已关闭）→ 判定「假运行」，立即重建。
+		// 这是「更新 docker 后只运行一次」的机制性修复：只要 runPushConsumer 因任何原因返回
+		//（ctx 取消 / 连接循环退出 / panic 恢复），done 就会关闭，监督器最迟在下一轮巡检（≤20s）重建。
+		if deadGen, dead := pushWatchdogLocked(); dead {
+			running = false
+			deadLog = fmt.Sprintf("事件驱动订阅意外退出（世代 %d），正在自动重建…", deadGen)
+		}
 		if running && (!want || pushSig != sig) {
 			pushStop()
 			pushStop = nil
 			pushSig = ""
+			pushDone = nil
 			running = false
 			if !want {
 				setPushStateLocked("config_missing", pushDisabledReason(c))
@@ -500,10 +615,13 @@ func pushSupervisor(ctx context.Context) {
 			}
 		}
 		if want && !running {
+			g := pushGen.Add(1)
 			cctx, cancel := context.WithCancel(ctx)
+			done := make(chan struct{})
 			pushStop = cancel
 			pushSig = sig
-			go runPushConsumer(cctx, c)
+			pushDone = done
+			pushLaunch(cctx, c, g, done)
 		} else if !want {
 			// 仅在状态变化时写入，避免 20s 巡检反复刷新 Since。
 			reason := pushDisabledReason(c)
@@ -512,6 +630,10 @@ func pushSupervisor(ctx context.Context) {
 			}
 		}
 		pushMu.Unlock()
+
+		if deadLog != "" {
+			appendLog("%s", deadLog)
+		}
 
 		// 锁外记日志：仅在「未启动原因」发生变化（含进程启动后的首次巡检）时记一条完整诊断行。
 		// 这样每次容器启动的日志里都有一行能回答：事件驱动是否启用 / 地址是什么 / Token 有没有 / 清理目录几个。
@@ -562,23 +684,55 @@ func tokenPresence(tok string) string {
 	return "有"
 }
 
+// pushConnect 是「建立一次订阅所需连接」的间接层（默认 connectPushClient）。
+// 抽成变量以便单测确定性地触发 runPushConsumer 的 panic 兜底（D4），无需真实 CD2。
+var pushConnect = connectPushClient
+
 // runPushConsumer 常驻运行事件驱动实时清理，直到 ctx 取消。
-// 连接失败记日志并每 10s 重试；权限不足记日志并返回（由监督器在下次保存配置后重启）。
-func runPushConsumer(ctx context.Context, c Config) {
-	setPushState("connecting", "正在连接 CD2…")
+// 连接失败记日志并每 10s 重试；权限不足记日志并 60s 退避重试（用户勾选权限后自愈）。
+//
+// gen 是订阅世代（D1/D3）：本函数所有 pushStat 写入都走 setPushStateIfGen，
+// 过期世代（已被热重启替换）的收尾写入会被丢弃，绝不覆盖新世代状态。
+// done 在本函数返回时关闭（任何退出路径，含 panic 恢复）——这是 D2 看门狗的「死亡」信号。
+func runPushConsumer(ctx context.Context, c Config, gen int64, done chan struct{}) {
+	defer close(done)
+	exitReason := "未知"
+	// 最外层 defer：panic 兜底（D4）+ 退出对账（D1）。
+	// 注册顺序很关键：本 defer 在 close(done) 之后注册 → 后注册先执行，
+	// 即先做 panic 恢复/写「已退出」状态，再关闭 done，保证监督器看到 done 关闭时状态已对账。
+	defer func() {
+		if r := recover(); r != nil {
+			// 一次 panic 不再杀掉整个进程（此前会导致容器重启后「跑一次就死」）；记栈并交给监督器自愈。
+			appendLog("事件驱动订阅发生 panic：%v\n%s", r, debug.Stack())
+			exitReason = fmt.Sprintf("panic：%v", r)
+		}
+		// 仅对「非 ctx 取消」的退出做状态对账（panic / 订阅循环异常收尾）。
+		// ctx 取消属于「被要求退出」（进程收尾 / 热重启），状态由监督器负责写入——若此处也写，
+		// 会与热重启时的「正在按新配置重启订阅…」打架，导致状态无意义地翻成 off。
+		if ctx.Err() == nil {
+			setPushStateIfGen("off", "订阅已退出："+exitReason, gen)
+		}
+	}()
+
+	setPushStateIfGen("connecting", "正在连接 CD2…", gen)
 	debounce := time.Duration(c.PushDebounceSeconds) * time.Second
 	for {
 		if ctx.Err() != nil {
+			exitReason = "ctx 取消"
 			return
 		}
-		client, token, err := connectPushClient(ctx, c)
+		client, token, err := pushConnect(ctx, c)
 		if err != nil {
 			if ctx.Err() != nil {
+				exitReason = "ctx 取消"
 				return
 			}
-			setPushState("error", "连接失败："+formatCD2Error(err).Error()+"（10s 后重试）")
+			msg := formatCD2Error(err).Error()
+			setPushStateIfGen("error", "连接失败："+msg+"（10s 后重试）", gen)
+			markPushLastError(gen, msg)
 			appendLog("事件驱动实时清理连接失败：%v（10s 后重试）", err)
 			if !waitOrDone(ctx, 10*time.Second) {
+				exitReason = "ctx 取消"
 				return
 			}
 			continue
@@ -589,11 +743,13 @@ func runPushConsumer(ctx context.Context, c Config) {
 			//（缺少 push 权限正是用户当前观察到的现象）。
 			markPushDeniedConnected(token)
 			client.Close()
-			setPushState("denied", "Token 缺少 allow_push_message 权限，事件驱动不生效")
+			setPushStateIfGen("denied", "Token 缺少 allow_push_message 权限，事件驱动不生效", gen)
+			markPushLastError(gen, "Token 缺少 allow_push_message 权限")
 			appendLog("Token 缺少 allow_push_message 权限，事件驱动实时清理不可用（不影响手动清理）。" +
 				"在 CD2 为该 Token 勾选该权限后会自动生效，无需保存配置或重启容器")
 			// 不永久 return：60s 退避后重试，用户勾选 allow_push_message 后无需任何操作即可自愈。
 			if !waitOrDone(ctx, 60*time.Second) {
+				exitReason = "ctx 取消"
 				return
 			}
 			continue
@@ -603,6 +759,12 @@ func runPushConsumer(ctx context.Context, c Config) {
 		// 先声明后赋值：让 trigger 闭包能引用 p 本身，从而在扫描互斥时 rearm 重试。
 		var p *pushConsumer
 		p = newPushConsumer(client, debounce, func() {
+			// 扫描期间的 panic 不得把订阅 goroutine 一起带走：单独兜底（D4）。
+			defer func() {
+				if r := recover(); r != nil {
+					appendLog("事件驱动触发扫描发生 panic：%v\n%s", r, debug.Stack())
+				}
+			}()
 			appendLog("事件驱动：防抖后触发扫描")
 			// runScan 自带 scanBusy 互斥，进行中会返回「已有扫描任务」错误。
 			res, serr := runScan(ctx, currentConfig().AllowDelete)
@@ -619,11 +781,12 @@ func runPushConsumer(ctx context.Context, c Config) {
 			}
 			appendLog("事件触发扫描完成 checked=%d matched=%d deleted=%d", res.Checked, res.Matched, res.Deleted)
 		})
-		setPushState("running", fmt.Sprintf("运行中（PushMessage 已订阅，防抖 %ds）", c.PushDebounceSeconds))
+		p.gen = gen
+		setPushStateIfGen("running", fmt.Sprintf("运行中（PushMessage 已订阅，防抖 %ds）", c.PushDebounceSeconds), gen)
 		appendLog("事件驱动实时清理已启动（PushMessage，防抖 %ds，地址=%s）", c.PushDebounceSeconds, normalizeAddress(c.Address))
 		p.run(ctx) // 常驻订阅；内部自带重连退避，ctx 取消时返回
 		client.Close()
-		setPushState("off", "订阅已结束")
+		exitReason = "订阅结束"
 		return
 	}
 }

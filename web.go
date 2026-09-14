@@ -455,6 +455,11 @@ function renderPerms(info){
 // 「缺少 allow_push_message」，甚至与徽章显示自相矛盾。现在唯一可信来源是后端。
 var PUSH_LABEL={off:'已停止',config_missing:'未启用',connecting:'连接中…',running:'运行中',denied:'权限不足',error:'连接失败'};
 var PUSH_COLOR={off:'var(--muted)',config_missing:'var(--warning-text)',connecting:'var(--warning-text)',running:'var(--success-text)',denied:'var(--danger-text)',error:'var(--danger-text)'};
+/* 存活可观测性（D5）时间辅助：后端时间戳为 "YYYY-MM-DD HH:MM:SS"（本地时间）。 */
+function parseTS(s){if(!s)return 0;var t=Date.parse(String(s).replace(' ','T'));return isNaN(t)?0:t}
+function agoText(s){var t=parseTS(s);if(!t)return '';var d=Date.now()-t;if(d<0)d=0;var m=Math.floor(d/60000);if(m<1)return '刚刚';if(m<60)return m+' 分钟前';var h=Math.floor(m/60);if(h<48)return h+' 小时前';return Math.floor(h/24)+' 天前'}
+function durText(s){var t=parseTS(s);if(!t)return '';var d=Date.now()-t;if(d<0)d=0;var m=Math.floor(d/60000);if(m<60)return m+' 分钟';var h=Math.floor(m/60);if(h<48)return h+' 小时';return Math.floor(h/24)+' 天'}
+var PUSH_STALE_MS=30*60*1000; // 运行中但超过 30 分钟无任何推送 → 黄色提示（给用户的自证手段）
 function renderPush(p){
   if(p)lastPush=p;
   var tag=el('pushState');
@@ -463,10 +468,18 @@ function renderPush(p){
   tag.title=lastPush.detail||'';
   var st=lastPush.state,html='';
   if(st==='running'){
+    var meta=[];
+    if(lastPush.gen)meta.push('世代 '+lastPush.gen);
+    if(lastPush.subscribedAt)meta.push('已建立 '+durText(lastPush.subscribedAt));
+    meta.push(lastPush.lastMessageAt?('最近收到推送 '+agoText(lastPush.lastMessageAt)):'尚未收到任何推送');
+    if(lastPush.reconnects)meta.push('重连 '+lastPush.reconnects+' 次');
     var live='';
-    if(lastPush.lastMessageAt)live+='；最近收到推送 '+esc(lastPush.lastMessageAt);
     if(lastPush.lastEventPath)live+='（最近变更 '+esc(lastPush.lastEventPath)+'）';
-    html='<div class="banner banner-info">事件驱动实时清理<b>运行中</b>：'+esc(lastPush.detail||'')+'；已收到 '+(lastPush.events||0)+' 个文件变更事件'+(lastPush.lastEvent?('，最近 '+esc(lastPush.lastEvent)):'')+live+'。</div>';
+    html='<div class="banner banner-info">事件驱动实时清理<b>运行中</b>：'+esc(lastPush.detail||'')+'；已收到 '+(lastPush.events||0)+' 个文件变更事件'+(lastPush.lastEvent?('，最近 '+esc(lastPush.lastEvent)):'')+live+'。<br><span style="opacity:.75">'+esc(meta.join(' · '))+'</span></div>';
+    var anchor=parseTS(lastPush.lastMessageAt)||parseTS(lastPush.subscribedAt);
+    if(anchor&&(Date.now()-anchor)>PUSH_STALE_MS){
+      html+='<div class="banner banner-warn">订阅存活但已超过 30 分钟未收到任何推送；若期间有文件变更未被清理，请检查 CD2 云端事件监听器（isCloudEventListenerRunning）。</div>';
+    }
   }else if(st==='denied'){
     html='<div class="banner banner-danger">事件驱动实时清理<b>未生效</b>：'+esc(lastPush.detail||'')+'。请在 CD2 为该 Token 勾选 allow_push_message，然后回本页点「保存配置」（无需重启容器）。</div>';
   }else if(st==='error'){
@@ -475,6 +488,12 @@ function renderPush(p){
     html='<div class="banner banner-warn">事件驱动实时清理未启动：'+esc(lastPush.detail||'')+'。保存配置后会自动启动，无需重启容器。</div>';
   }else if(st==='connecting'){
     html='<div class="banner banner-warn">事件驱动实时清理正在连接 CD2…</div>';
+  }else if(st==='off'){
+    html='<div class="banner banner-warn">事件驱动实时清理已停止：'+esc(lastPush.detail||'')+'。保存配置或等待监督器自动重建。</div>';
+  }
+  // 非运行中时必须暴露最近一次订阅失败原因（D5，已脱敏，绝不写 Token 明文）。
+  if(st!=='running'&&lastPush.lastError){
+    html+='<div class="banner banner-warn">最近一次订阅失败：'+esc(lastPush.lastError)+(lastPush.lastErrorAt?('（'+esc(lastPush.lastErrorAt)+'）'):'')+'。</div>';
   }
   // 云端事件监听器告警：仅在拿到数据且确有掉线云盘时提示（拿不到时静默降级，不误报）。
   if(lastStatus&&lastStatus.cloudApis&&lastStatus.cloudApis.length){

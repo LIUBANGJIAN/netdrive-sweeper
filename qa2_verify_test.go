@@ -379,7 +379,7 @@ func TestQA2_RunPushConsumerDeniedBranch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读取 main.go: %v", err)
 	}
-	body := extractGoFunc(t, string(b), "func runPushConsumer(ctx context.Context, c Config)")
+	body := extractGoFunc(t, string(b), "func runPushConsumer(ctx context.Context, c Config, gen int64, done chan struct{})")
 	// 截取 denied 分支片段。
 	i := strings.Index(body, "!token.AllowPushMessage")
 	if i < 0 {

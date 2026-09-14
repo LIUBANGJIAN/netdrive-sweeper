@@ -26,6 +26,9 @@ func isFileSystemChange(messageType int32) bool {
 type pushConsumer struct {
 	client   *CD2Client
 	debounce time.Duration
+	// gen 是订阅世代（由 runPushConsumer 注入）。仅用于把「重连计数 / 最近错误」等运行时
+	// 观测量按世代守卫地写入 pushStat，避免过期世代污染新世代状态。测试直接构造时为 0。
+	gen int64
 	// maxDelay 是单次突发的最大延迟上限（= 6×debounce）。纯防抖下持续不断的事件流会让
 	// trigger 永远无法触发（即「有时行有时不行」的根因），此上限保证突发在最坏情况下也能按时触发。
 	maxDelay time.Duration
@@ -245,7 +248,8 @@ func (p *pushConsumer) rearm() {
 }
 
 // run 常驻订阅直到 ctx 取消。订阅断开后按「指数 + 抖动」退避重连（重连退避不是扫描循环，允许）。
-// 建立/中断每次都有日志，使「刚建立就被服务端关掉」的抖动一眼可见。
+// 建立/发起/结束/中断每次都有日志（含次数与世代），使「发起了几次、结束了几次、世代几」一眼可见。
+// 重连计数与最近错误按世代守卫写入 pushStat，供前端展示（D5）。
 // 严禁在此处做任何「每 N 秒扫全树」的定时任务。
 func (p *pushConsumer) run(ctx context.Context) {
 	attempt := 0
@@ -256,8 +260,17 @@ func (p *pushConsumer) run(ctx context.Context) {
 		attempt++
 		if p.log != nil {
 			p.log("正在建立 PushMessage 订阅（第 %d 次）", attempt)
+			p.log("事件驱动订阅已发起（第 %d 次，世代 %d），等待 CD2 推送…", attempt, p.gen)
 		}
 		err := p.client.SubscribePush(ctx, p.onEvent)
+		reason := pushExitReason(ctx, err)
+		if p.log != nil {
+			p.log("事件驱动订阅结束（第 %d 次，世代 %d，原因=%s）", attempt, p.gen, reason)
+		}
+		if err != nil {
+			// 脱敏：formatCD2Error 的文本不含 Token 明文。
+			markPushLastError(p.gen, formatCD2Error(err).Error())
+		}
 		if ctx.Err() != nil {
 			return
 		}
@@ -269,12 +282,25 @@ func (p *pushConsumer) run(ctx context.Context) {
 				p.log("PushMessage 订阅中断（第 %d 次），%s 后重连：%v", attempt, delay, err)
 			}
 		}
+		markPushReconnect(p.gen, attempt)
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(delay):
 		}
 	}
+}
+
+// pushExitReason 把一次订阅尝试的结束原因归类为可读文本：ctx 取消 / EOF / 错误。
+// 用于让日志一眼看出「这次是优雅关闭还是中断」，避免把故障当成正常收尾。
+func pushExitReason(ctx context.Context, err error) string {
+	if ctx.Err() != nil {
+		return "ctx 取消"
+	}
+	if err == nil {
+		return "EOF（服务端关闭订阅流）"
+	}
+	return "错误：" + err.Error()
 }
 
 const (
