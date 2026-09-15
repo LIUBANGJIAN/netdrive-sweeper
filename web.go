@@ -100,6 +100,7 @@ section.tabpane.active{display:grid;gap:var(--s4);align-content:start}
 .formgroup input:focus,.formgroup textarea:focus,.formgroup select:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(88,166,255,.1)}
 .formgroup .help{font-size:12px;color:var(--muted);margin-top:4px}
 .formgroup .help.warn{color:var(--warning-text)}
+.formgroup .help.warn.box{margin-top:6px;padding:8px 12px;font-size:13px;line-height:1.5;color:var(--warning-text);background:var(--warning-bg);border:1px solid var(--warning);border-radius:6px}
 .checks .help.warn{margin-top:6px;padding:8px 12px;font-size:13px;line-height:1.5;color:var(--warning-text);background:var(--warning-bg);border:1px solid var(--warning);border-radius:6px}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:var(--s3)}.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--s3)}
 .checks{display:flex;gap:var(--s2);flex-wrap:wrap;margin-top:var(--s3)}
@@ -246,7 +247,7 @@ details.adv .adv-body{padding:0 12px 12px}
         <div class="card">
           <h2>CD2 连接</h2>
           <div class="row2">
-            <div class="formgroup"><label>gRPC 地址</label><input id="address" placeholder="127.0.0.1:19798"><div class="help">CD2 的 gRPC 端口，默认 127.0.0.1:19798</div></div>
+            <div class="formgroup"><label>gRPC 地址</label><input id="address" placeholder="192.168.1.10:19798"><div class="help">Docker 桥接部署：填群晖宿主机的内网 IP（如 192.168.1.10:19798），或用 host.docker.internal:19798；仅 host 网络模式或程序直接跑在宿主机上时才可用 127.0.0.1:19798</div><div id="addrHint" class="help warn box" style="display:none">当前程序运行在容器内（桥接网络），127.0.0.1 指向容器自身，无法连到宿主机的 CD2。请改填宿主机内网 IP，或使用 host.docker.internal:19798。</div></div>
             <div class="formgroup"><label>API Token</label>
               <div class="inline"><input id="token" type="password" autocomplete="off"><button type="button" class="btn btn-ghost btn-sm" id="toggleToken">显示</button></div>
               <div class="help">在 CD2 中创建，需含 allow_list / allow_delete（清理时）/ allow_push_message（事件驱动时）</div>
@@ -335,6 +336,7 @@ details.adv .adv-body{padding:0 12px 12px}
 var state={},dirty=false,lastScan=null,lastScanTime='',lastToken=null,savedOnce=false;
 var lastPush={state:'off',detail:'',events:0,lastEvent:''};
 var lastStatus=null; // 最近的 /api/state|/api/push 运行状态（含 cloudApis 云端事件监听器状态）
+var inContainer=false; // 后端探测：当前进程是否运行在容器内（用于桥接模式地址防呆提示）
 var logState={level:'all',search:'',follow:true,raw:''};
 var activeTab='logs';
 
@@ -503,6 +505,32 @@ function renderPush(p){
     }
   }
   el('pushHint').innerHTML=html;
+}
+
+/* ---------- gRPC 地址防呆：容器内 + 回环地址 ---------- */
+// isLoopbackAddr 判定地址的 host 部分是否为回环/通配地址（127.0.0.1 / localhost / ::1 / 0.0.0.0）。
+// 与后端 Go 版 isLoopbackAddr 语义保持一致：正确剥离端口，兼容 [::1]:19798 与无端口的裸 IPv6。
+function isLoopbackAddr(addr){
+  var s=String(addr===undefined||addr===null?'':addr).trim();
+  if(!s)return false;
+  var host=s,sc=host.indexOf('://');if(sc>=0)host=host.slice(sc+3);
+  var cut=host.search(/[\/?#]/);if(cut>=0)host=host.slice(0,cut);
+  if(host.charAt(0)==='['){
+    var end=host.indexOf(']');host=(end>=0)?host.slice(1,end):host.slice(1);
+  }else if(host.indexOf(':')!==host.lastIndexOf(':')){
+    /* 多个冒号且无方括号：裸 IPv6 字面量，无端口，原样使用 */
+  }else{
+    var ci=host.lastIndexOf(':');
+    if(ci>=0){var port=host.slice(ci+1);if(port!==''&&/^[0-9]+$/.test(port))host=host.slice(0,ci)}
+  }
+  host=host.trim().toLowerCase();
+  return host==='127.0.0.1'||host==='localhost'||host==='::1'||host==='0.0.0.0';
+}
+// renderAddrHint：仅当「进程运行在容器内」且「地址框填的是回环地址」时显示黄色内联提示；
+// 其余情况隐藏（用户把地址改成宿主机 IP / host.docker.internal 时提示即时消失）。
+function renderAddrHint(){
+  var box=el('addrHint');if(!box)return;
+  box.style.display=(inContainer&&isLoopbackAddr(val('address')))?'':'none';
 }
 function updateNextAction(){
   var a='';
@@ -784,6 +812,7 @@ el('clearLogsBtn').addEventListener('click',function(){
 });
 // 勾选/取消「事件驱动实时清理」：立即刷新提示（后端订阅在保存配置后才真正启停）。
 el('enablePush').addEventListener('change',function(){renderPush()});
+el('address').addEventListener('input',renderAddrHint); // 边输入边重判桥接模式回环地址提示
 // 删除总开关/永久删除变化会改变「手动清理」的语义与结果摘要，立即刷新。
 el('allowDelete').addEventListener('change',function(){renderRunMeta();updateNextAction()});
 el('deletePermanently').addEventListener('change',function(){renderRunMeta()});
@@ -794,6 +823,8 @@ function loadPush(){
   return api('/api/push?_='+Date.now()).then(function(j){
     if(j.status)lastStatus=j.status;
     renderPush(j.push);
+    if(typeof j.inContainer==='boolean')inContainer=j.inContainer;
+    renderAddrHint();
     // 运行状态（含 Token 权限）由后端在「启动自检 / 保存自检 / 订阅成功」时写入，
     // 前端据此自动点亮连接状态与权限徽章——用户不必再手点一次「测试连接」。
     if(j.status){
@@ -823,6 +854,8 @@ function load(){
     var t=validTime(j.lastScanAt);if(t)lastScanTime=t;
     lastStatus=j.status||null;
     renderPush(j.push);
+    inContainer=(j.inContainer===true);
+    renderAddrHint();
     lastToken=j.status&&j.status.token?j.status.token:null;
     if(lastToken){renderPerms(lastToken);setConn('ok',lastToken)}else{renderPerms(null);setConn('none')}
     renderRunMeta();

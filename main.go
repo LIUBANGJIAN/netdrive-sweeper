@@ -187,7 +187,7 @@ func handleState(w http.ResponseWriter, r *http.Request) {
 	s := statusInfo
 	at := lastScanAt
 	stateMu.Unlock()
-	writeJSON(w, map[string]any{"config": c, "status": s, "push": pushSnapshot(), "lastScanAt": at})
+	writeJSON(w, map[string]any{"config": c, "status": s, "push": pushSnapshot(), "lastScanAt": at, "inContainer": inContainer()})
 }
 
 func handleSave(w http.ResponseWriter, r *http.Request) {
@@ -344,7 +344,7 @@ func handlePush(w http.ResponseWriter, r *http.Request) {
 	at := lastScanAt
 	s := statusInfo
 	stateMu.Unlock()
-	writeJSON(w, map[string]any{"ok": true, "push": pushSnapshot(), "lastScanAt": at, "status": s})
+	writeJSON(w, map[string]any{"ok": true, "push": pushSnapshot(), "lastScanAt": at, "status": s, "inContainer": inContainer()})
 }
 
 func handleClearLogs(w http.ResponseWriter, r *http.Request) {
@@ -682,6 +682,73 @@ func tokenPresence(tok string) string {
 		return "无"
 	}
 	return "有"
+}
+
+// ---------- 容器环境与地址防呆（桥接模式 127.0.0.1 陷阱） ----------
+
+// inContainer 报告当前进程是否运行在容器内（Docker / Podman 等）。
+// 依据：容器运行时会在根目录放置标记文件 /.dockerenv（Docker）或 /run/.containerenv（Podman）。
+// 这是「Docker 桥接模式下，容器内的 127.0.0.1 指向容器自身、永远连不到宿主机 CD2」这一
+// 高频部署陷阱的防呆基础：前端据此在地址栏填回环地址时给出黄色内联提示，避免误导用户。
+func inContainer() bool { return inContainerWith(os.Stat) }
+
+// inContainerWith 是可注入 stat 的内层实现，便于单测确定性验证（无需真的在 / 下创建标记文件）。
+func inContainerWith(stat func(string) (os.FileInfo, error)) bool {
+	for _, p := range []string{"/.dockerenv", "/run/.containerenv"} {
+		if _, err := stat(p); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// isLoopbackAddr 判定 gRPC 地址的 host 部分是否为回环/通配地址
+// （127.0.0.1 / localhost / ::1 / 0.0.0.0），并正确剥离端口、兼容无端口的裸 IPv6 字面量。
+//
+// 注意：前端内联 JS 里有一份语义完全一致的 isLoopbackAddr（用于「边输入边判定」——输入框的值
+// 只有浏览器知道，后端无从获取）。此 Go 版本作为可表驱动验证的参考实现保留，两者规则必须同步，
+// 见 web_addr_hint_test.go。
+func isLoopbackAddr(addr string) bool {
+	s := strings.TrimSpace(addr)
+	if s == "" {
+		return false
+	}
+	host := s
+	if i := strings.Index(host, "://"); i >= 0 { // 容忍误填的 scheme 前缀
+		host = host[i+3:]
+	}
+	if i := strings.IndexAny(host, "/?#"); i >= 0 { // 去掉路径/查询
+		host = host[:i]
+	}
+	switch {
+	case strings.HasPrefix(host, "["): // [::1]:19798 这类 IPv6 字面量
+		if j := strings.IndexByte(host, ']'); j >= 0 {
+			host = host[1:j]
+		} else {
+			host = host[1:]
+		}
+	case strings.Count(host, ":") > 1: // 多个冒号且无方括号：裸 IPv6，无端口，原样使用
+	default:
+		if i := strings.LastIndexByte(host, ':'); i >= 0 {
+			port := host[i+1:]
+			allDigit := port != ""
+			for _, r := range port {
+				if r < '0' || r > '9' {
+					allDigit = false
+					break
+				}
+			}
+			if allDigit {
+				host = host[:i]
+			}
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(host)) {
+	case "127.0.0.1", "localhost", "::1", "0.0.0.0":
+		return true
+	default:
+		return false
+	}
 }
 
 // pushConnect 是「建立一次订阅所需连接」的间接层（默认 connectPushClient）。
