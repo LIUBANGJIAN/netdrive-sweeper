@@ -49,7 +49,6 @@ a{color:var(--blue)}
 .tb-spacer{flex:1 1 auto}
 .dirty{font-size:13px;color:var(--warning-text)}
 .tb-meta{font-size:13px;color:var(--muted)}
-.suggest{color:var(--blue)}
 .progress{height:2px;width:100%;background:transparent;overflow:hidden}
 .progress.on{background:linear-gradient(90deg,transparent 0,var(--blue) 40%,var(--green) 60%,transparent 100%);background-size:30% 100%;background-repeat:no-repeat;animation:slide 1.1s linear infinite}
 @keyframes slide{0%{background-position:-40% 0}100%{background-position:140% 0}}
