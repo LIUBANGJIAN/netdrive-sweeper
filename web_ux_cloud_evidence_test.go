@@ -5,16 +5,21 @@ import (
 	"testing"
 )
 
-// TestWebUX_HideReadyLineAndUnifyChecks 回归用户本轮的三处前端调整：
-//  1. 右上角不再显示「一切就绪…」与「建议：到②手动清理一次」；
-//  2. 清理规则选项框不再出现红框（无 class="check warn"）；
-//  3. 日志框改为随视口高度自适应（不再固定 max-height:420px）。
+// TestWebUX_HideReadyLineAndUnifyChecks 回归本轮前端调整：
+//  1. 右上角「下一步提示」整块移除（无 id="nextAction"、无 updateNextAction）；
+//  2. 「一切就绪…」与「建议：到②手动清理一次」文案不再出现；
+//  3. 清理规则选项框不再出现红框（无 class="check warn"）；
+//  4. 日志框改为随视口高度自适应（不再固定 max-height:420px）；
+//  5. 云端监听器 pushLive 改用与后端一致的时间窗判据（不再用粘性的累计 events）。
 func TestWebUX_HideReadyLineAndUnifyChecks(t *testing.T) {
 	mustNot := []string{
+		`id="nextAction"`,
+		"updateNextAction",
 		"一切就绪，正在按规则运行",
 		"建议：到「② 运行日志」点「手动清理」执行一次",
 		`class="check warn"`,
 		"max-height:420px",
+		"(lastPush.events||0)>0",
 	}
 	for _, bad := range mustNot {
 		if strings.Contains(pageHTML, bad) {
@@ -24,12 +29,13 @@ func TestWebUX_HideReadyLineAndUnifyChecks(t *testing.T) {
 
 	must := []string{
 		"height:clamp(280px,calc(100vh - 340px),1200px)",
-		// 前端按「是否已确证仍在收推送」分级（后端 pushLive 证据位）。
-		"pushLive=(lastPush.state==='running'",
+		// 前端 pushLive 与后端 pushEvidenceWindow 同口径的时间窗判据。
+		"parseTS(lastPush.lastMessageAt)",
+		"<=600000",
 		// 该筛选子串被 qa3 结构断言 pin 住，必须保留。
 		"lastStatus.cloudApis.filter(function(a){return a.isCloudEventListenerRunning===false})",
 		// 分级提示的两种文案（有证据 / 无证据）。
-		"已确证仍能收到变更推送",
+		"已确证仍能收到该云盘的推送消息",
 		"该标记仅表示 CD2 的云端原生推送通道未开启",
 	}
 	for _, m := range must {

@@ -202,7 +202,6 @@ details.adv .adv-body{padding:0 12px 12px}
  .btn{min-height:44px}
  .tab{padding:12px 10px}
  .mini,.chip{min-height:44px;display:inline-flex;align-items:center}
- .tb-meta.suggest{display:none}
  #toastRoot{left:12px;right:12px;bottom:12px;align-items:stretch}
  .modal-mask{align-items:flex-end;padding:0}
  .modal{width:100%;border-radius:16px 16px 0 0}
@@ -228,7 +227,6 @@ details.adv .adv-body{padding:0 12px 12px}
       <span class="tb-meta" id="lastRunMeta">-</span>
       <span class="tb-meta">事件驱动: <span class="pushtag" id="pushState">-</span></span>
       <div class="tb-spacer"></div>
-      <span class="tb-meta suggest" id="nextAction"></span>
     </div>
     <div class="progress" id="progress"></div>
   </div>
@@ -498,15 +496,22 @@ function renderPush(p){
   }
   // 云端原生事件监听器状态：仅在拿到数据且确有掉线云盘时提示（拿不到时静默降级，不误报）。
   // 关键更正：isCloudEventListenerRunning=false 只代表 CD2「云端原生推送通道」未开启，
-  // 并不必然意味着本程序的 PushMessage 订阅会停。故按「是否已确证仍在收到变更推送」分级，
+  // 并不必然意味着本程序的 PushMessage 订阅会停。故按「是否已确证仍在投递」分级，
   // 去掉吓人的红字绝对化断言（用户已被该误报困扰）。
   if(lastStatus&&lastStatus.cloudApis&&lastStatus.cloudApis.length){
     var down=lastStatus.cloudApis.filter(function(a){return a.isCloudEventListenerRunning===false});
-    var pushLive=(lastPush.state==='running'&&(lastPush.events||0)>0);
+    /* 与后端 pushEvidenceWindow（main.go，10 分钟）同口径：订阅 running 且最近一次收到
+       推送消息在 10 分钟内，才算「已确证仍在投递」。不用累计 events——它有粘性（只增不减），
+       会在订阅已死时仍显示健康。 */
+    var pushLive=false;
+    if(lastPush.state==='running'){
+      var lm=parseTS(lastPush.lastMessageAt);
+      pushLive=!!lm&&(Date.now()-lm)<=600000;
+    }
     if(down.length&&!pushLive){
       html+='<div class="banner banner-warn">提示：CD2 云盘「'+down.map(function(a){return esc(a.name)}).join('、')+'」的云端原生事件监听器未运行（isCloudEventListenerRunning=false）。该标记仅表示 CD2 的云端原生推送通道未开启，CD2 仍可能通过自身变更检测投递事件；若长时间收不到变更事件，请检查该云盘连接/重新登录。</div>';
     }else if(down.length&&pushLive){
-      html+='<div class="banner banner-info">CD2 云盘「'+down.map(function(a){return esc(a.name)}).join('、')+'」上报云端原生事件监听器未运行，但本程序已确证仍能收到变更推送，事件驱动清理不受影响。</div>';
+      html+='<div class="banner banner-info">CD2 云盘「'+down.map(function(a){return esc(a.name)}).join('、')+'」上报云端原生事件监听器未运行，但本程序已确证仍能收到该云盘的推送消息，事件驱动清理不受影响。</div>';
     }
   }
   el('pushHint').innerHTML=html;
@@ -537,16 +542,6 @@ function renderAddrHint(){
   var box=el('addrHint');if(!box)return;
   box.style.display=(inContainer&&isLoopbackAddr(val('address')))?'':'none';
 }
-function updateNextAction(){
-  var a='';
-  if(!lastToken)a='建议：先到「① 连接 · 目录 · 规则」测试连接';
-  else if(taskList().length<1)a='建议：添加至少 1 个清理目录';
-  else if(!checked('allowDelete'))a='当前为预览模式：勾选「允许自动清理」后才会真正删除';
-  // 「一切就绪…」与「建议：到② 手动清理一次」两类状态不再展示（用户要求）
-  var e=el('nextAction');if(!e)return;
-  e.textContent=a;
-  e.classList.toggle('hidden',!a);
-}
 
 /* ---------- tabs ---------- */
 function switchTab(name){
@@ -559,7 +554,7 @@ el('tabs').addEventListener('click',function(e){var b=e.target.closest('.tab');i
 
 /* ---------- tasks ---------- */
 function taskList(){var v=val('tasksHidden');if(!v)return[];return v.split('\n').map(function(x){return x.trim()}).filter(Boolean)}
-function setTaskList(list){setv('tasksHidden',list.join('\n'));renderTaskList(list);updateNextAction();guardEmptyTasks()}
+function setTaskList(list){setv('tasksHidden',list.join('\n'));renderTaskList(list);guardEmptyTasks()}
 function renderTaskList(list){
   el('taskCount').textContent=list.length;
   el('tabConnCount').textContent=list.length;
@@ -652,7 +647,7 @@ function fillConfig(c){
   el('allowDelete').checked=!!c.allow_delete;
   el('enablePush').checked=c.enable_push!==false;
   setTaskList(c.tasks&&c.tasks.length?c.tasks:[]);
-  setDirty(false);updateNextAction();
+  setDirty(false);
 }
 function gatherCfg(){
   return {
@@ -689,7 +684,6 @@ function testConn(){
     var pre=dirty?saveCfg():Promise.resolve();
     pre.then(function(){return api('/api/test?_='+Date.now())}).then(function(j){
       lastToken=j.token;renderPerms(j.token);setConn('ok',j.token);
-      updateNextAction();
       toast(j.message,'success');
     }).catch(function(e){setConn('fail',null,e.message);toast(e.message,'error')}).finally(function(){
       // §9.9 ③：测试期间按钮 disabled + 「测试中…」，成功/失败都要恢复。
@@ -820,7 +814,7 @@ el('clearLogsBtn').addEventListener('click',function(){
 el('enablePush').addEventListener('change',function(){renderPush()});
 el('address').addEventListener('input',renderAddrHint); // 边输入边重判桥接模式回环地址提示
 // 删除总开关/永久删除变化会改变「手动清理」的语义与结果摘要，立即刷新。
-el('allowDelete').addEventListener('change',function(){renderRunMeta();updateNextAction()});
+el('allowDelete').addEventListener('change',function(){renderRunMeta()});
 el('deletePermanently').addEventListener('change',function(){renderRunMeta()});
 window.addEventListener('beforeunload',function(e){if(dirty){e.preventDefault();e.returnValue=''}});
 
@@ -865,7 +859,6 @@ function load(){
     lastToken=j.status&&j.status.token?j.status.token:null;
     if(lastToken){renderPerms(lastToken);setConn('ok',lastToken)}else{renderPerms(null);setConn('none')}
     renderRunMeta();
-    updateNextAction();
   });
 }
 switchTab('logs');

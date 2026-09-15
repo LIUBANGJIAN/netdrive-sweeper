@@ -6,7 +6,8 @@ package main
 //	    都不 panic 且安全降级；
 //	(b) pushSupervisor 的「未启动原因」变化时才记日志、且不重复刷屏，Token 明文绝不进日志；
 //	(c) 重连退避序列单调不减且封顶，抖动有界；
-//	(d) GetAllCloudApis 解析在 isCloudEventListenerRunning=false 时产告警，且 key 仅在结果变化时改变。
+//	(d) GetAllCloudApis 解析在 isCloudEventListenerRunning=false 时按证据分级提示：有证据→
+//	    「提示：…已确证仍能收到该云盘的推送消息…」；无证据→去掉绝对化断言的提示（两者都不再是「警告」）。
 // 另附 P1「订阅存活可见性」的最小证据（任意类型推送计数 + 最近路径）。
 // 所有断言只依赖纯函数/内存结构，不依赖真实 CD2 连接。
 

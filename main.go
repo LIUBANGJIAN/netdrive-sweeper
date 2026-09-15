@@ -1074,7 +1074,7 @@ func cloudListenerReport(apis []CloudAPI, pushLive bool) (lines []string, key st
 		}
 		if pushLive {
 			lines = append(lines, fmt.Sprintf(
-				"提示：CD2 云盘「%s」的云端原生事件监听器未运行（isCloudEventListenerRunning=false）；但本程序已确证仍能收到该云盘的变更推送，事件驱动清理不受影响，无需处理。",
+				"提示：CD2 云盘「%s」的云端原生事件监听器未运行（isCloudEventListenerRunning=false）；但本程序已确证仍能收到该云盘的推送消息（订阅存活），事件驱动清理不受影响，无需处理。",
 				a.Name))
 			continue
 		}
