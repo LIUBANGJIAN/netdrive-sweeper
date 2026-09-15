@@ -232,7 +232,7 @@ func TestQA3v_StatusMonitorChainNoDirectoryScan(t *testing.T) {
 		"func probeCD2Status(ctx context.Context, c Config)",
 		"func connectPushClient(ctx context.Context, c Config)",
 		"func checkCloudEventListeners(ctx context.Context, c Config, lastKey string)",
-		"func cloudListenerReport(apis []CloudAPI)",
+		"func cloudListenerReport(apis []CloudAPI, pushLive bool)",
 	}
 	for _, sig := range funcs {
 		body := extractGoFunc(t, src, sig)
@@ -261,18 +261,22 @@ func TestQA3v_CloudListenerThrottleStructure(t *testing.T) {
 	}
 }
 
-// D-3: cloudListenerReport 的 key 不变/变；空列表安全。
+// D-3: cloudListenerReport 的 key 不变/变；空列表安全（key 现含 pushLive 证据位）。
 func TestQA3v_CloudListenerReportKeyEdges(t *testing.T) {
-	lines, key := cloudListenerReport(nil)
-	if key != "" || len(lines) != 0 {
-		t.Fatalf("空列表应得空 key/空行，实际 key=%q lines=%v", key, lines)
+	lines, key := cloudListenerReport(nil, false)
+	if len(lines) != 0 {
+		t.Fatalf("空列表应得空行，实际 lines=%v", lines)
 	}
-	_, k1 := cloudListenerReport([]CloudAPI{{Name: "115", IsCloudEventListenerRunning: false}})
-	_, k1b := cloudListenerReport([]CloudAPI{{Name: "115", IsCloudEventListenerRunning: false}})
+	// key 现在包含 pushLive 证据位，故空列表的 key 为 "pushLive=false"（非空）。
+	if key != "pushLive=false" {
+		t.Fatalf("空列表 key 应为 pushLive=false，实际 %q", key)
+	}
+	_, k1 := cloudListenerReport([]CloudAPI{{Name: "115", IsCloudEventListenerRunning: false}}, false)
+	_, k1b := cloudListenerReport([]CloudAPI{{Name: "115", IsCloudEventListenerRunning: false}}, false)
 	if k1 != k1b {
 		t.Fatalf("相同结果 key 不稳定：%q vs %q", k1, k1b)
 	}
-	_, k2 := cloudListenerReport([]CloudAPI{{Name: "115", IsCloudEventListenerRunning: true}})
+	_, k2 := cloudListenerReport([]CloudAPI{{Name: "115", IsCloudEventListenerRunning: true}}, false)
 	if k2 == k1 {
 		t.Fatalf("结果变化 key 未改变：%q", k2)
 	}

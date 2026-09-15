@@ -431,6 +431,25 @@ func pushSnapshot() PushRuntime {
 	return s
 }
 
+// pushEvidenceWindow 是「订阅仍被证据支撑」的时间窗：最近一次收到推送消息在此窗口内，
+// 即说明 CD2 确实仍在投递事件，无论 isCloudEventListenerRunning 上报什么。
+const pushEvidenceWindow = 10 * time.Minute
+
+// pushHasLiveEvidence 判断是否已有「CD2 正在投递事件」的确凿证据：订阅 running 且最近一次
+// 收到任意推送消息在 pushEvidenceWindow 之内。用于压制 isCloudEventListenerRunning=false 的误报
+// （实证：某云盘上报 false，但程序持续收到 changeType=1/2 事件并完成删除）。
+func pushHasLiveEvidence() bool {
+	s := pushSnapshot()
+	if s.State != "running" || s.LastMessageAt == "" {
+		return false
+	}
+	t, err := time.ParseInLocation("2006-01-02 15:04:05", s.LastMessageAt, time.Local)
+	if err != nil {
+		return false
+	}
+	return time.Since(t) <= pushEvidenceWindow
+}
+
 // setPushState 更新推送运行时状态（自持锁）。注意：不要在本函数内再取 pushMu 之外的锁后回调，
 // 也不要在持有 pushMu 时调用（否则死锁），持有锁时用 setPushStateLocked。
 func setPushState(state, detail string) {
@@ -1012,7 +1031,7 @@ func statusMonitor(ctx context.Context) {
 const cloudListenerInterval = 2 * time.Minute
 
 // checkCloudEventListeners 查询各云盘的云端事件监听器状态（轻量元数据，不遍历目录），
-// 写入 statusInfo.CloudAPIs，并在结果变化时记日志（含 isCloudEventListenerRunning=false 的醒目告警）。
+// 写入 statusInfo.CloudAPIs，并在结果变化时记日志（isCloudEventListenerRunning=false 按证据分级提示，非绝对告警）。
 // 返回本次结果签名（供调用方做「仅变化时记日志」的节流）。查询失败静默降级，绝不误报。
 func checkCloudEventListeners(ctx context.Context, c Config, lastKey string) string {
 	client, err := newCD2Client(c)
@@ -1027,7 +1046,7 @@ func checkCloudEventListeners(ctx context.Context, c Config, lastKey string) str
 		return lastKey // 静默降级：拿不到时保持上一次结果，不误报（也不清空 statusInfo.CloudAPIs）
 	}
 	setCloudAPIs(apis)
-	lines, key := cloudListenerReport(apis)
+	lines, key := cloudListenerReport(apis, pushHasLiveEvidence())
 	if key == lastKey {
 		return lastKey
 	}
@@ -1038,19 +1057,32 @@ func checkCloudEventListeners(ctx context.Context, c Config, lastKey string) str
 }
 
 // cloudListenerReport 依据云盘列表生成「需要记录的日志行」与稳定签名 key。
-// 纯函数，便于单测：isCloudEventListenerRunning=false 时产出醒目告警，key 变化即代表结果变化。
-func cloudListenerReport(apis []CloudAPI) (lines []string, key string) {
-	parts := make([]string, 0, len(apis))
+// 纯函数，便于单测。pushLive 表示「本程序已确证仍在收到推送」（见 pushHasLiveEvidence）：
+//   - isCloudEventListenerRunning=true：运行中提示；
+//   - false 且 pushLive：说明该标记并不代表推送会停，降级为提示，避免误报（实证场景）；
+//   - false 且 !pushLive：提示（不再作「推送会停止」式的绝对化断言），
+//     说明该标记仅指云端原生通道，CD2 仍可能通过自身变更检测投递，并给出排查建议。
+//
+// key 里含 pushLive，故「证据状态翻转」也会重记日志（否则只翻转证据时不会重新记录）。
+func cloudListenerReport(apis []CloudAPI, pushLive bool) (lines []string, key string) {
+	parts := make([]string, 0, len(apis)+1)
 	for _, a := range apis {
 		parts = append(parts, fmt.Sprintf("%s=%v", a.Name, a.IsCloudEventListenerRunning))
 		if a.IsCloudEventListenerRunning {
 			lines = append(lines, fmt.Sprintf("CD2 云盘「%s」云端事件监听器运行中（isCloudEventListenerRunning=true）", a.Name))
 			continue
 		}
+		if pushLive {
+			lines = append(lines, fmt.Sprintf(
+				"提示：CD2 云盘「%s」的云端原生事件监听器未运行（isCloudEventListenerRunning=false）；但本程序已确证仍能收到该云盘的变更推送，事件驱动清理不受影响，无需处理。",
+				a.Name))
+			continue
+		}
 		lines = append(lines, fmt.Sprintf(
-			"警告：CD2 云盘「%s」的云端事件监听器未运行（isCloudEventListenerRunning=false）——CD2 将不再推送文件变更事件，事件驱动清理不会触发；请在 CD2 中检查该云盘连接/重新登录。",
+			"提示：CD2 云盘「%s」的云端原生事件监听器未运行（isCloudEventListenerRunning=false）。该标记仅表示 CD2 的云端原生推送通道未开启，CD2 仍可能通过自身变更检测投递事件；若长时间收不到该云盘的变更事件，请检查该云盘连接/重新登录。",
 			a.Name))
 	}
+	parts = append(parts, fmt.Sprintf("pushLive=%v", pushLive))
 	return lines, strings.Join(parts, ";")
 }
 

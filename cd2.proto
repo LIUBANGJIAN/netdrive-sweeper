@@ -18,8 +18,9 @@ service CloudDriveFileSrv {
   // PushMessage 是 CD2 服务器推送流（事件驱动实时感知的唯一合法来源）。
   rpc PushMessage(google.protobuf.Empty) returns (stream CloudDrivePushMessage) {}
   // GetAllCloudApis 返回所有云盘 API 连接（含云端事件监听器是否运行）。
-  // 用于诊断「事件驱动忽然失效」：某云盘的 isCloudEventListenerRunning=false 时，
-  // CD2 不会再推送文件变更事件。对齐指南 3721-3747。
+  // 用于诊断「事件驱动忽然失效」：isCloudEventListenerRunning 表示 CD2 的云盘「云端原生事件
+  // 监听器」是否运行；为 false 并不必然意味着 PushMessage 停止投递（CD2 仍可能通过自身变更
+  // 检测投递，实证：该标记为 false 时程序仍持续收到 changeType=1/2 事件）。对齐指南 3721-3747。
   rpc GetAllCloudApis(google.protobuf.Empty) returns (CloudAPIList) {}
 }
 
@@ -138,8 +139,8 @@ message TokenInfo {
 }
 
 // CloudAPIList / CloudAPI 对齐官方 GetAllCloudApis 响应（指南 3728-3747）。
-// isCloudEventListenerRunning=false 表示该云盘云端事件监听器未运行——CD2 将不再推送
-// 文件变更事件（事件驱动清理不会触发），这是「事件驱动忽然失效 / 只运行一次」的关键诊断信号。
+// isCloudEventListenerRunning 表示该云盘「云端原生事件监听器」是否运行；为 false 不必然意味着
+// PushMessage 停止投递（CD2 仍可能通过自身变更检测投递事件），仅作为诊断参考信号。
 message CloudAPIList {
   repeated CloudAPI apis = 1;
 }

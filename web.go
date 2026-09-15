@@ -105,7 +105,6 @@ section.tabpane.active{display:grid;gap:var(--s4);align-content:start}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:var(--s3)}.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--s3)}
 .checks{display:flex;gap:var(--s2);flex-wrap:wrap;margin-top:var(--s3)}
 .check{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:var(--r-sm);padding:7px 10px;background:var(--bg);font-size:13px;color:var(--text)}
-.check.warn{border-color:var(--danger)}
 .check input{width:auto;height:auto}
 .inline{display:flex;gap:6px;align-items:center}
 .inline input{flex:1}
@@ -156,7 +155,7 @@ details.adv .adv-body{padding:0 12px 12px}
 .chip.active{background:var(--card);color:var(--text);border-color:var(--blue)}
 
 /* ---------- logs ---------- */
-.logbox{max-height:420px;overflow:auto;padding:12px;background:var(--log-bg);border-radius:var(--r-md);border:1px solid var(--line);font-size:13px;line-height:1.6;color:var(--muted);white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace}
+.logbox{width:100%;height:clamp(280px,calc(100vh - 340px),1200px);overflow:auto;padding:12px;background:var(--log-bg);border-radius:var(--r-md);border:1px solid var(--line);font-size:13px;line-height:1.6;color:var(--muted);white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace}
 .logline{display:block}
 .logline .ts{color:var(--muted)}
 .logline .tx{color:var(--text-dim)}
@@ -282,10 +281,10 @@ details.adv .adv-body{padding:0 12px 12px}
         <div class="formgroup"><label>未完成后缀</label><input id="incompleteSuffixes" value=".part,.download,.!qB,.bc!,.aria2,.crdownload,.td,.tmp,.!ut"><div class="help">含这些后缀的目录整目录跳过。留空会自动回填默认值，不建议清空</div></div>
       </div>
       <div class="checks">
-        <label class="check warn"><input id="forceRefresh" type="checkbox">强制刷新 CD2 缓存（会显著增加网盘 API 压力，非必要不建议开启）</label>
+        <label class="check"><input id="forceRefresh" type="checkbox">强制刷新 CD2 缓存（会显著增加网盘 API 压力，非必要不建议开启）</label>
         <label class="check"><input id="offlineOnly" type="checkbox" checked>只清理已完成离线任务</label>
         <label class="check"><input id="deletePermanently" type="checkbox">永久删除（不进回收站）</label>
-        <label class="check warn"><input id="allowDelete" type="checkbox">允许自动清理（删除总开关）</label>
+        <label class="check"><input id="allowDelete" type="checkbox">允许自动清理（删除总开关）</label>
         <label class="check"><input id="enablePush" type="checkbox" checked>启用事件驱动实时清理（PushMessage）</label>
       </div>
       <div class="pushbox" id="pushHint"></div>
@@ -497,11 +496,17 @@ function renderPush(p){
   if(st!=='running'&&lastPush.lastError){
     html+='<div class="banner banner-warn">最近一次订阅失败：'+esc(lastPush.lastError)+(lastPush.lastErrorAt?('（'+esc(lastPush.lastErrorAt)+'）'):'')+'。</div>';
   }
-  // 云端事件监听器告警：仅在拿到数据且确有掉线云盘时提示（拿不到时静默降级，不误报）。
+  // 云端原生事件监听器状态：仅在拿到数据且确有掉线云盘时提示（拿不到时静默降级，不误报）。
+  // 关键更正：isCloudEventListenerRunning=false 只代表 CD2「云端原生推送通道」未开启，
+  // 并不必然意味着本程序的 PushMessage 订阅会停。故按「是否已确证仍在收到变更推送」分级，
+  // 去掉吓人的红字绝对化断言（用户已被该误报困扰）。
   if(lastStatus&&lastStatus.cloudApis&&lastStatus.cloudApis.length){
     var down=lastStatus.cloudApis.filter(function(a){return a.isCloudEventListenerRunning===false});
-    if(down.length){
-      html+='<div class="banner banner-danger">警告：CD2 云盘「'+down.map(function(a){return esc(a.name)}).join('、')+'」的云端事件监听器未运行，CD2 将不再推送文件变更事件，事件驱动清理不会触发；请在 CD2 中检查该云盘连接/重新登录。</div>';
+    var pushLive=(lastPush.state==='running'&&(lastPush.events||0)>0);
+    if(down.length&&!pushLive){
+      html+='<div class="banner banner-warn">提示：CD2 云盘「'+down.map(function(a){return esc(a.name)}).join('、')+'」的云端原生事件监听器未运行（isCloudEventListenerRunning=false）。该标记仅表示 CD2 的云端原生推送通道未开启，CD2 仍可能通过自身变更检测投递事件；若长时间收不到变更事件，请检查该云盘连接/重新登录。</div>';
+    }else if(down.length&&pushLive){
+      html+='<div class="banner banner-info">CD2 云盘「'+down.map(function(a){return esc(a.name)}).join('、')+'」上报云端原生事件监听器未运行，但本程序已确证仍能收到变更推送，事件驱动清理不受影响。</div>';
     }
   }
   el('pushHint').innerHTML=html;
@@ -536,10 +541,11 @@ function updateNextAction(){
   var a='';
   if(!lastToken)a='建议：先到「① 连接 · 目录 · 规则」测试连接';
   else if(taskList().length<1)a='建议：添加至少 1 个清理目录';
-  else if(!lastScan)a='建议：到「② 运行日志」点「手动清理」执行一次';
   else if(!checked('allowDelete'))a='当前为预览模式：勾选「允许自动清理」后才会真正删除';
-  else a='一切就绪，正在按规则运行';
-  el('nextAction').textContent=a;
+  // 「一切就绪…」与「建议：到② 手动清理一次」两类状态不再展示（用户要求）
+  var e=el('nextAction');if(!e)return;
+  e.textContent=a;
+  e.classList.toggle('hidden',!a);
 }
 
 /* ---------- tabs ---------- */

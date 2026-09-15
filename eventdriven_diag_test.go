@@ -402,41 +402,64 @@ func TestDiag_ReconnectJitterBounded(t *testing.T) {
 
 // ==================== (d) GetAllCloudApis 解析 + 仅变化时记一次 ====================
 
-// d1: cloudListenerReport——isCloudEventListenerRunning=false 产出醒目告警；true 产出运行中。
-func TestDiag_CloudListenerReport_WarnsWhenNotRunning(t *testing.T) {
-	lines, key := cloudListenerReport([]CloudAPI{{Name: "115", IsCloudEventListenerRunning: false}})
+// d1: cloudListenerReport——isCloudEventListenerRunning=false 的文案按「是否有仍能收到推送的证据」分级：
+// 无证据时产出提示（不再绝对化断言）；有证据时产出「已确证仍能收到」的提示，避免误报。
+func TestDiag_CloudListenerReport_GradedByEvidence(t *testing.T) {
+	// pushLive=false：非绝对化提示，不再出现吓人的「警告」与「CD2 将不再推送文件变更事件」。
+	lines, key := cloudListenerReport([]CloudAPI{{Name: "115", IsCloudEventListenerRunning: false}}, false)
 	if len(lines) != 1 {
 		t.Fatalf("应产出 1 行，实际 %d", len(lines))
 	}
-	if !strings.Contains(lines[0], "警告") || !strings.Contains(lines[0], "未运行") {
-		t.Fatalf("false 应产醒目告警，实际 %q", lines[0])
+	if !strings.Contains(lines[0], "提示") || !strings.Contains(lines[0], "未运行") {
+		t.Fatalf("false 应产提示，实际 %q", lines[0])
 	}
-	if key != "115=false" {
-		t.Fatalf("key 应为 115=false，实际 %q", key)
+	if strings.Contains(lines[0], "警告") {
+		t.Fatalf("不应再出现「警告」绝对化措辞，实际 %q", lines[0])
+	}
+	if strings.Contains(lines[0], "CD2 将不再推送文件变更事件") {
+		t.Fatalf("不应再出现「CD2 将不再推送文件变更事件」的绝对化断言，实际 %q", lines[0])
+	}
+	if key != "115=false;pushLive=false" {
+		t.Fatalf("key 应为 115=false;pushLive=false，实际 %q", key)
+	}
+
+	// pushLive=true：降级为「已确证仍能收到」的提示。
+	linesLive, keyLive := cloudListenerReport([]CloudAPI{{Name: "115", IsCloudEventListenerRunning: false}}, true)
+	if len(linesLive) != 1 || !strings.Contains(linesLive[0], "已确证仍能收到") {
+		t.Fatalf("pushLive=true 应产「已确证仍能收到」提示，实际 %v", linesLive)
+	}
+	if !strings.Contains(keyLive, "pushLive=true") {
+		t.Fatalf("key 应含 pushLive=true，实际 %q", keyLive)
 	}
 }
 
-// d2: cloudListenerReport——key 稳定：相同结果 key 不变（→ 调用方仅在变化时记一次）；不同结果 key 变。
+// d2: cloudListenerReport——key 稳定：相同结果 key 不变（→ 调用方仅在变化时记一次）；不同结果 key 变；
+// 且「证据位 pushLive」翻转时 key 也必须变。
 func TestDiag_CloudListenerReport_KeyChangesOnlyOnResultChange(t *testing.T) {
-	_, k1 := cloudListenerReport([]CloudAPI{{Name: "115", IsCloudEventListenerRunning: false}})
-	_, k1again := cloudListenerReport([]CloudAPI{{Name: "115", IsCloudEventListenerRunning: false}})
+	_, k1 := cloudListenerReport([]CloudAPI{{Name: "115", IsCloudEventListenerRunning: false}}, false)
+	_, k1again := cloudListenerReport([]CloudAPI{{Name: "115", IsCloudEventListenerRunning: false}}, false)
 	if k1 != k1again {
 		t.Fatalf("相同结果 key 必须稳定：%q vs %q", k1, k1again)
 	}
-	_, k2 := cloudListenerReport([]CloudAPI{{Name: "115", IsCloudEventListenerRunning: true}})
+	_, k2 := cloudListenerReport([]CloudAPI{{Name: "115", IsCloudEventListenerRunning: true}}, false)
 	if k2 == k1 {
 		t.Fatalf("结果变化后 key 必须改变，仍为 %q", k1)
 	}
 	if !strings.Contains(k2, "true") {
 		t.Fatalf("true 结果 key 应含 true，实际 %q", k2)
 	}
-	// 多盘：key 拼接且顺序稳定。
+	// 仅证据位翻转（同盘同监听器状态）也必须改变 key。
+	_, kLive := cloudListenerReport([]CloudAPI{{Name: "115", IsCloudEventListenerRunning: false}}, true)
+	if kLive == k1 {
+		t.Fatalf("pushLive 翻转后 key 必须改变，仍为 %q", k1)
+	}
+	// 多盘：key 拼接且顺序稳定（末尾附 pushLive 证据位）。
 	_, kmulti := cloudListenerReport([]CloudAPI{
 		{Name: "a", IsCloudEventListenerRunning: true},
 		{Name: "b", IsCloudEventListenerRunning: false},
-	})
-	if kmulti != "a=true;b=false" {
-		t.Fatalf("多盘 key 应为 a=true;b=false，实际 %q", kmulti)
+	}, false)
+	if kmulti != "a=true;b=false;pushLive=false" {
+		t.Fatalf("多盘 key 应为 a=true;b=false;pushLive=false，实际 %q", kmulti)
 	}
 }
 
@@ -471,10 +494,10 @@ func TestDiag_ParseCloudAPIs_FromDynamicMessage(t *testing.T) {
 		t.Fatalf("第 2 个云盘解析错误：%+v", got[1])
 	}
 
-	// 关键链路：解析结果喂给 cloudListenerReport，必须对 false 的那个产告警。
-	lines, key := cloudListenerReport(got)
-	if !strings.Contains(strings.Join(lines, "\n"), "警告") {
-		t.Fatalf("含 false 的解析结果应产告警，实际 %v", lines)
+	// 关键链路：解析结果喂给 cloudListenerReport，必须对 false 的那个产提示（非绝对化告警）。
+	lines, key := cloudListenerReport(got, false)
+	if !strings.Contains(strings.Join(lines, "\n"), "提示") {
+		t.Fatalf("含 false 的解析结果应产提示，实际 %v", lines)
 	}
 	if !strings.Contains(key, "115=false") {
 		t.Fatalf("key 应含 115=false，实际 %q", key)
