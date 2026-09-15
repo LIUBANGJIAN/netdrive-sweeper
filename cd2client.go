@@ -740,7 +740,7 @@ func formatCD2Error(err error) error {
 	// 拨号失败是 *net.OpError（非 gRPC status），在 status.FromError 之前先识别。
 	var opErr *net.OpError
 	if errors.As(err, &opErr) {
-		return fmt.Errorf("CD2 不可达：%v。请确认 CD2 已启动并已开启 gRPC 服务，地址端口正确（默认 127.0.0.1:19798），Docker 建议使用 host 网络", opErr)
+		return fmt.Errorf("CD2 不可达：%v。请确认 CD2 已启动并已开启 gRPC 服务、地址端口正确；Docker 桥接部署需填宿主机内网 IP（容器内的 127.0.0.1 指向容器自身），或使用 host 网络 / host.docker.internal", opErr)
 	}
 	if s, ok := status.FromError(err); ok {
 		switch s.Code() {
