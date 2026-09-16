@@ -145,7 +145,8 @@ func TestMustLoadConfig_MigratesLegacyCooldown(t *testing.T) {
 	if !strings.Contains(string(b), fmt.Sprintf(`"config_version": %d`, currentConfigVersion)) || !strings.Contains(string(b), `"file_cooldown_hours": 0`) {
 		t.Fatalf("迁移结果未落盘：%s", string(b))
 	}
-	// 幂等：把值改回 6 再加载，因版本已是 1 而不再迁移。
+	// 防回归：v1 配置同样会进入 migrateConfig；靠 v0→v1 步的 `ConfigVersion < 1` 守卫跳过该步，
+	// 用户显式的 6 才得以保留（若缺此守卫，版本 bump 到 2 后 v1 的 6 会被误改写成 0）。
 	if err := os.WriteFile(configPath, []byte(`{"config_version":1,"file_cooldown_hours":6,"token":"tok"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
