@@ -11,27 +11,31 @@ import (
 // Config 是单实例的内存配置 + 持久化契约。
 type Config struct {
 	// ConfigVersion 用于一次性配置迁移（0 = 历史版本，见 migrateConfig）。
-	ConfigVersion       int      `json:"config_version"`
-	Address             string   `json:"address"`
-	Token               string   `json:"token"`
-	AdExts              string   `json:"ad_exts"`
-	VideoExts           string   `json:"video_exts"`
-	SizeLimitMB         float64  `json:"size_limit_mb"`
-	ExcludeDirs         string   `json:"exclude_dirs"`
-	MaxDepth            int      `json:"max_depth"`
-	ForceRefresh        bool     `json:"force_refresh"`
-	OfflineOnly         bool     `json:"offline_only"`
-	DeletePermanently   bool     `json:"delete_permanently"`
-	AllowDelete         bool     `json:"allow_delete"`
-	OpsPerSec           float64  `json:"ops_per_sec"`
-	Burst               int      `json:"burst"`
-	MaxFilesPerRun      int      `json:"max_files_per_run"`
-	MaxTotalBytes       int64    `json:"max_total_bytes"`
-	FileCooldownHours   int      `json:"file_cooldown_hours"`
-	EnablePush          bool     `json:"enable_push"`
-	PushDebounceSeconds int      `json:"push_debounce_seconds"`
-	IncompleteSuffixes  string   `json:"incomplete_suffixes"`
-	Tasks               []string `json:"tasks"`
+	ConfigVersion       int     `json:"config_version"`
+	Address             string  `json:"address"`
+	Token               string  `json:"token"`
+	AdExts              string  `json:"ad_exts"`
+	VideoExts           string  `json:"video_exts"`
+	SizeLimitMB         float64 `json:"size_limit_mb"`
+	ExcludeDirs         string  `json:"exclude_dirs"`
+	MaxDepth            int     `json:"max_depth"`
+	ForceRefresh        bool    `json:"force_refresh"`
+	OfflineOnly         bool    `json:"offline_only"`
+	DeletePermanently   bool    `json:"delete_permanently"`
+	AllowDelete         bool    `json:"allow_delete"`
+	OpsPerSec           float64 `json:"ops_per_sec"`
+	Burst               int     `json:"burst"`
+	MaxFilesPerRun      int     `json:"max_files_per_run"`
+	MaxTotalBytes       int64   `json:"max_total_bytes"`
+	FileCooldownHours   int     `json:"file_cooldown_hours"`
+	EnablePush          bool    `json:"enable_push"`
+	PushDebounceSeconds int     `json:"push_debounce_seconds"`
+	// EventScanMinIntervalMinutes 是两次「事件驱动」扫描之间的最小间隔（分钟）。0 = 关闭冷却（旧行为）。
+	// 背景：CD2 的 PushMessage 是全局流——别的应用/系统/CD2 自身的变更都会推给我们；稳定的涓流
+	// 事件会让防抖每几秒就触发一次全目录扫描。此间隔给事件驱动扫描设下限，保护网盘 API 不被刷爆。
+	EventScanMinIntervalMinutes int      `json:"event_scan_min_interval_minutes"`
+	IncompleteSuffixes          string   `json:"incomplete_suffixes"`
+	Tasks                       []string `json:"tasks"`
 }
 
 // currentConfigVersion 是当前配置结构版本。新增需要迁移的语义变更时 +1，并在 migrateConfig 里补一段。
@@ -55,25 +59,26 @@ func migrateConfig(c Config) Config {
 
 func defaultConfig() Config {
 	return Config{
-		ConfigVersion:       currentConfigVersion,
-		Address:             "127.0.0.1:19798",
-		AdExts:              ".txt,.html,.url,.lnk",
-		VideoExts:           ".mp4,.mkv,.ts",
-		SizeLimitMB:         20,
-		ExcludeDirs:         "重要,备份",
-		MaxDepth:            0,
-		ForceRefresh:        false,
-		OfflineOnly:         true,
-		DeletePermanently:   false, // 默认进网盘回收站（用户拍板）
-		AllowDelete:         false, // 删除总开关默认关闭
-		OpsPerSec:           5.0,   // 115 官方 maxQueriesPerSecondLimit
-		Burst:               10,
-		MaxFilesPerRun:      2000,
-		MaxTotalBytes:       10 << 30, // 10 GiB
-		FileCooldownHours:   0,        // 0 = 立即清理（已拍板：不再默认冷却 6h）
-		EnablePush:          true,
-		PushDebounceSeconds: 5,
-		IncompleteSuffixes:  ".part,.download,.!qB,.bc!,.aria2,.crdownload,.td,.tmp,.!ut",
+		ConfigVersion:               currentConfigVersion,
+		Address:                     "127.0.0.1:19798",
+		AdExts:                      ".txt,.html,.url,.lnk",
+		VideoExts:                   ".mp4,.mkv,.ts",
+		SizeLimitMB:                 20,
+		ExcludeDirs:                 "重要,备份",
+		MaxDepth:                    0,
+		ForceRefresh:                false,
+		OfflineOnly:                 true,
+		DeletePermanently:           false, // 默认进网盘回收站（用户拍板）
+		AllowDelete:                 false, // 删除总开关默认关闭
+		OpsPerSec:                   5.0,   // 115 官方 maxQueriesPerSecondLimit
+		Burst:                       10,
+		MaxFilesPerRun:              2000,
+		MaxTotalBytes:               10 << 30, // 10 GiB
+		FileCooldownHours:           0,        // 0 = 立即清理（已拍板：不再默认冷却 6h）
+		EnablePush:                  true,
+		PushDebounceSeconds:         5,
+		EventScanMinIntervalMinutes: 5, // 事件驱动扫描最小间隔（分钟）：防止无关事件把扫描刷成几秒一次
+		IncompleteSuffixes:          ".part,.download,.!qB,.bc!,.aria2,.crdownload,.td,.tmp,.!ut",
 		// Tasks 默认为空：空目录 = 不扫描任何目录（T7 裁决）。
 		// 仅影响「新装 / 重置」的默认值；已有配置维持原值（本次不迁移历史数据）。
 		Tasks: []string{},
@@ -103,6 +108,8 @@ func normalizeConfig(c Config) Config {
 	}
 	c.FileCooldownHours = clampInt(c.FileCooldownHours, 0, 168, 0)
 	c.PushDebounceSeconds = clampInt(c.PushDebounceSeconds, 1, 120, 5)
+	// 事件驱动扫描最小间隔：0 = 关闭冷却；非法值回退默认 5 分钟。
+	c.EventScanMinIntervalMinutes = clampInt(c.EventScanMinIntervalMinutes, 0, 1440, 5)
 	// 防呆：未完成后缀被清空会静默废掉「含未完成后缀则整目录跳过」这道保险丝（P0-23）。
 	if strings.TrimSpace(c.IncompleteSuffixes) == "" {
 		c.IncompleteSuffixes = defaultConfig().IncompleteSuffixes

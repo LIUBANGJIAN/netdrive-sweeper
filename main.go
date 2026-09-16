@@ -46,7 +46,8 @@ type PushRuntime struct {
 	State         string        `json:"state"`                   // off|config_missing|connecting|running|denied|error
 	Detail        string        `json:"detail"`                  // 人类可读说明
 	Since         string        `json:"since"`                   // 进入该状态的时间
-	Events        int           `json:"events"`                  // 已收到的文件系统变更事件数
+	Events        int           `json:"events"`                  // 已收到的（范围内）文件系统变更事件数
+	IgnoredEvents int           `json:"ignoredEvents"`           // 被忽略的「清理范围外/无路径」变更事件数（F1/F3）
 	LastEvent     string        `json:"lastEvent"`               // 最近一次文件系统变更事件时间
 	LastEventPath string        `json:"lastEventPath,omitempty"` // 最近一次文件系统变更事件的路径（尽力而为提取）
 	LastMessageAt string        `json:"lastMessageAt,omitempty"` // 最近一次收到任意类型推送消息的时间（订阅存活证据）
@@ -577,6 +578,24 @@ func markPushEventPath(path string) {
 	pushMu.Unlock()
 }
 
+// bumpIgnoredEvent 记录一次「被忽略的清理范围外/无路径」变更事件（F1/F3），随 /api/state 暴露。
+func bumpIgnoredEvent() {
+	pushMu.Lock()
+	pushStat.IgnoredEvents++
+	pushMu.Unlock()
+}
+
+// currentTokenRoot 只读内存中的 Token 根目录（形如 /BON_115网盘），用于事件路径的范围判定。
+// 绝不发起任何对 CD2 的请求。Token 未知时返回 ""。
+func currentTokenRoot() string {
+	stateMu.Lock()
+	defer stateMu.Unlock()
+	if statusInfo.Token == nil {
+		return ""
+	}
+	return statusInfo.Token.RootDir
+}
+
 // setCloudAPIs 写入各云盘连接与云端事件监听器状态，供 /api/state 与前端 banner 展示。
 func setCloudAPIs(apis []CloudAPI) {
 	stateMu.Lock()
@@ -868,6 +887,8 @@ func runPushConsumer(ctx context.Context, c Config, gen int64, done chan struct{
 			appendLog("事件触发扫描完成 checked=%d matched=%d deleted=%d", res.Checked, res.Matched, res.Deleted)
 		})
 		p.gen = gen
+		// F2：两次事件驱动扫描之间的最小间隔。0 = 关闭冷却（旧行为）。
+		p.minInterval = time.Duration(c.EventScanMinIntervalMinutes) * time.Minute
 		setPushStateIfGen("running", fmt.Sprintf("运行中（PushMessage 已订阅，防抖 %ds）", c.PushDebounceSeconds), gen)
 		appendLog("事件驱动实时清理已启动（PushMessage，防抖 %ds，地址=%s）", c.PushDebounceSeconds, normalizeAddress(c.Address))
 		p.run(ctx) // 常驻订阅；内部自带重连退避，ctx 取消时返回

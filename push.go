@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"strings"
 	"sync"
 	"time"
 )
@@ -35,9 +36,14 @@ type pushConsumer struct {
 	trigger  func()
 	log      func(format string, args ...any)
 
-	mu           sync.Mutex  // 保护 timer / firstEventAt
+	mu           sync.Mutex  // 保护 timer / firstEventAt / minInterval / lastTriggerAt
 	timer        *time.Timer // 当前待触发的防抖定时器
 	firstEventAt time.Time   // 当前突发中首个事件的时间；零值表示无待触发突发
+
+	// F2 扫描冷却：两次事件驱动扫描之间的最小间隔。minInterval==0 表示关闭冷却（旧行为）。
+	// lastTriggerAt 是「上次真正触发扫描」的时刻，用于冷却判定与末尾触发（trailing）计算。
+	minInterval   time.Duration
+	lastTriggerAt time.Time
 
 	tmu  sync.Mutex     // 保护 seen
 	seen map[int32]bool // 已见过的消息类型（用于首次诊断日志，避免重复刷屏）
@@ -46,6 +52,68 @@ type pushConsumer struct {
 	dedupSec     string     // 最近一次记录的秒（同秒同路径去重用）
 	dedupPath    string     // 最近一次记录的路径
 	fscProbeLeft int        // 剩余可打印「原始字段」诊断的事件数（首帧探测）
+
+	// F3 日志降噪：范围外/无路径事件不逐条打印，改计数 + 节流摘要（每 ≥outOfScopeLogInterval 至多一条）。
+	omu                sync.Mutex
+	outOfScopeN        int       // 累计被忽略的事件数（范围外 + 无路径）
+	outOfScopeAt       time.Time // 上次摘要日志时间（节流用）
+	outOfScopeLastPath string    // 最近一次被忽略事件的路径（摘要展示用）
+}
+
+// outOfScopeLogInterval 是「清理范围外事件」摘要日志的最小间隔（F3 日志降噪，避免刷屏）。
+const outOfScopeLogInterval = 60 * time.Second
+
+// eventInCleanScope 判断一条文件系统变更事件的路径是否落在配置的清理目录内。
+// evPath 是 CD2 推送的路径，形如「Token 根 + API 路径」（实测 /BON_115网盘/私存入库/...）；
+// tasks 是 Config.Tasks（根相对，形如 /私存入库）；tokenRoot 形如 /BON_115网盘。
+//
+// 规则：
+//  1. 统一分隔符为 /、去掉首尾多余 /（并折叠重复 /）。
+//  2. tokenRoot 非空且不是 / 时，若 evPath 等于 root 或以 root+"/" 开头，则剥掉 root 前缀得根相对路径。
+//  3. 对每个 task（cleanTasks 规范化后）判断：相等，或以 task+"/" 开头（必须路径段对齐——
+//     /影视 不得匹配 /影视2/...）；task == "/" 视为全命中。
+//  4. 空 evPath → false（无法证明在范围内，fail-closed）。
+//  5. tasks 为空 → false（与 sweeper「空目录=不扫描」一致，事件驱动也不触发）。
+//
+// 纯函数，便于表驱动单测。
+func eventInCleanScope(evPath string, tasks []string, tokenRoot string) bool {
+	if strings.TrimSpace(evPath) == "" {
+		return false
+	}
+	ev := collapseSlashes(normalizePath(evPath))
+
+	root := collapseSlashes(normalizePath(tokenRoot)) // "" 或 "/" → "/"
+	if root != "/" {
+		switch {
+		case ev == root:
+			ev = "/" // 事件恰好是根目录本身 → 根相对为 /
+		case strings.HasPrefix(ev, root+"/"):
+			ev = collapseSlashes(normalizePath(ev[len(root):]))
+		}
+	}
+
+	clean := cleanTasks(tasks)
+	if len(clean) == 0 {
+		return false
+	}
+	for _, t := range clean {
+		t = collapseSlashes(t)
+		if t == "/" {
+			return true
+		}
+		if ev == t || strings.HasPrefix(ev, t+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// collapseSlashes 把连续多个 "/" 折叠为单个（保持前导 "/"）。
+func collapseSlashes(s string) string {
+	for strings.Contains(s, "//") {
+		s = strings.ReplaceAll(s, "//", "/")
+	}
+	return s
 }
 
 // newPushConsumer 构造一个 pushConsumer。debounce <= 0 时回退到 5 秒。
@@ -64,17 +132,59 @@ func newPushConsumer(client *CD2Client, debounce time.Duration, trigger func()) 
 	}
 }
 
-// onEvent 是 PushMessage 的回调入口：先做「事件可诊断性」记录，再进入既有防抖逻辑。
-// 说明：handle(messageType int32) 的签名与实现保持不变（既有测试与结构锚定依赖它），
-// 带负载的 PushEvent 在本函数里被消费，handle 继续只负责防抖调度。
+// onEvent 是 PushMessage 的回调入口。
+// F1 路径范围过滤：CD2 的 PushMessage 是全局流（别的应用/系统/CD2 自身的变更都会推来），
+// 只有落在配置清理目录内的事件才进入防抖并触发扫描；范围外事件只计数 + 节流摘要（F3），不触发。
+// 说明：handle(messageType int32) 的签名与实现保持不变（既有测试与结构锚定依赖它）。
 func (p *pushConsumer) onEvent(ev PushEvent) {
 	// 任意类型的推送到达都是「订阅存活」的证据。
 	markPushMessage(ev.Type)
 	if isFileSystemChange(ev.Type) {
-		p.logFileSystemChange(ev)
-		markPushEventPath(ev.Path)
+		if eventInCleanScope(ev.Path, currentConfig().Tasks, currentTokenRoot()) {
+			p.logFileSystemChange(ev) // 范围内事件：保留明细
+			markPushEventPath(ev.Path)
+			p.handle(ev.Type) // 只有范围内事件才进入防抖/触发
+		} else {
+			p.noteOutOfScope(ev) // 范围外/无路径：计数 + 节流摘要，不触发
+		}
+		return
 	}
-	p.handle(ev.Type)
+	p.handle(ev.Type) // 非 FSC 仍走原逻辑（noteType 等）
+}
+
+// noteOutOfScope 记录一条「不在清理范围」的文件系统变更事件（含路径提取失败的空路径）：
+// 计数、绝不触发扫描；每 ≥outOfScopeLogInterval 至多打印一条摘要，避免被无关事件刷屏（F3）。
+// 空路径属 F1b：无法证明在范围内 → fail-closed 跳过，但同样节流可见，避免「静默失效」。
+func (p *pushConsumer) noteOutOfScope(ev PushEvent) {
+	empty := strings.TrimSpace(ev.Path) == ""
+	p.omu.Lock()
+	p.outOfScopeN++
+	if !empty {
+		p.outOfScopeLastPath = ev.Path
+	}
+	now := time.Now()
+	due := p.outOfScopeAt.IsZero() || now.Sub(p.outOfScopeAt) >= outOfScopeLogInterval
+	n := p.outOfScopeN
+	last := p.outOfScopeLastPath
+	if due {
+		p.outOfScopeAt = now
+	}
+	p.omu.Unlock()
+
+	bumpIgnoredEvent() // 暴露到 /api/state.push.ignoredEvents，便于诊断「被忽略了多少」
+
+	if !due || p.log == nil {
+		return
+	}
+	if empty {
+		p.log("变更事件未携带路径，无法判断是否在清理范围内，已跳过（累计 %d 次）", n)
+		return
+	}
+	if last != "" {
+		p.log("已忽略 %d 个清理范围外的变更事件（最近：%s）", n, last)
+		return
+	}
+	p.log("已忽略 %d 个清理范围外的变更事件", n)
 }
 
 // logFileSystemChange 记录一条文件系统变更事件（带路径）。FSC 是核心信号，每条都记；
@@ -175,14 +285,14 @@ func (p *pushConsumer) handle(messageType int32) {
 		p.firstEventAt = time.Now()
 	}
 	if time.Since(p.firstEventAt) >= p.maxDelay {
-		// 达到最大延迟上限：锁内清空突发状态并停掉待触发定时器，解锁后立即异步触发。
+		// 达到最大延迟上限：锁内清空突发状态并停掉待触发定时器，解锁后经冷却闸门触发。
 		p.firstEventAt = time.Time{}
 		if p.timer != nil {
 			p.timer.Stop()
 			p.timer = nil
 		}
 		p.mu.Unlock()
-		p.asyncTrigger()
+		p.triggerWithCooldown()
 		return
 	}
 	// 未达上限：锁内按 debounce 顺延重建定时器。
@@ -191,7 +301,7 @@ func (p *pushConsumer) handle(messageType int32) {
 }
 
 // asyncTrigger 在独立 goroutine 中触发一次 trigger，绝不阻塞订阅流。
-// 作为「立即触发」路径的公共出口（定时器回调路径仍走 fire，见其幂等守卫）。
+// 作为「实际触发」的唯一出口（均由 triggerWithCooldown 在冷却闸门放行后调用）。
 func (p *pushConsumer) asyncTrigger() {
 	go func() {
 		if p.trigger != nil {
@@ -200,8 +310,30 @@ func (p *pushConsumer) asyncTrigger() {
 	}()
 }
 
-// fire 取消待触发的定时器并立即触发一次 trigger。
-// 锁内重置状态、解锁后在独立 goroutine 中调用 trigger——保持「trigger 不阻塞订阅流」的既有语义。
+// triggerWithCooldown 是「实际扫描」的唯一闸门（F2 扫描冷却）：统一 fire()（防抖定时器到期）与
+// handle 的「达上限立即触发」两条入口，避免两套延迟互相打架。
+// 若距上次扫描不足 minInterval，则不立即扫描，而是在「上次触发 + minInterval」安排一次末尾触发
+// （trailing），保证冷却期内到达的最后一个变更最终仍被处理（不丢事件）。
+// minInterval==0 时退化为旧行为（立即触发）。
+func (p *pushConsumer) triggerWithCooldown() {
+	p.mu.Lock()
+	if p.minInterval > 0 && !p.lastTriggerAt.IsZero() {
+		next := p.lastTriggerAt.Add(p.minInterval)
+		if now := time.Now(); now.Before(next) {
+			// 冷却中：标记仍有待处理突发，并在冷却结束时安排一次末尾触发。
+			p.firstEventAt = time.Now()
+			p.scheduleLocked(time.Until(next))
+			p.mu.Unlock()
+			return
+		}
+	}
+	p.lastTriggerAt = time.Now() // 在真正执行扫描前占位，使随后的冷却判定生效
+	p.mu.Unlock()
+	p.asyncTrigger()
+}
+
+// fire 取消待触发的定时器并经冷却闸门触发一次 trigger。
+// 锁内重置状态、解锁后再调用 triggerWithCooldown——保持「trigger 不阻塞订阅流」的既有语义。
 // 幂等：当已无待触发突发（例如达到上限的立即触发与末次事件的定时器同时到达）时不再重复触发。
 func (p *pushConsumer) fire() {
 	p.mu.Lock()
@@ -215,11 +347,7 @@ func (p *pushConsumer) fire() {
 	if !active {
 		return
 	}
-	go func() {
-		if p.trigger != nil {
-			p.trigger()
-		}
-	}()
+	p.triggerWithCooldown()
 }
 
 // scheduleLocked 以新的延迟重建防抖定时器（先停掉旧 timer）。
