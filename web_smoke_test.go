@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -22,6 +23,7 @@ func TestHandleIndex_RendersPage(t *testing.T) {
 		`id="runBtn"`,
 		`id="pushState"`,
 		`id="pushHint"`,
+		`id="eventScanMinInterval"`, // F2 扫描冷却的 UI 输入（存量用户可调；见 config 迁移 v1→v2）
 		`id="lastRunMeta"`,
 		`id="logsBox"`,
 		`data-tab="config"`,
@@ -98,8 +100,8 @@ func TestHandleSave_PreservesConfigVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读回配置失败: %v", err)
 	}
-	if !strings.Contains(string(b), `"config_version": 1`) {
-		t.Fatalf("落盘配置缺少 config_version=1：%s", string(b))
+	if want := fmt.Sprintf(`"config_version": %d`, currentConfigVersion); !strings.Contains(string(b), want) {
+		t.Fatalf("落盘配置缺少 %s：%s", want, string(b))
 	}
 }
 
@@ -140,7 +142,7 @@ func TestMustLoadConfig_MigratesLegacyCooldown(t *testing.T) {
 		t.Fatalf("迁移不应丢失既有字段，tasks=%v", c.Tasks)
 	}
 	b, _ := os.ReadFile(configPath)
-	if !strings.Contains(string(b), `"config_version": 1`) || !strings.Contains(string(b), `"file_cooldown_hours": 0`) {
+	if !strings.Contains(string(b), fmt.Sprintf(`"config_version": %d`, currentConfigVersion)) || !strings.Contains(string(b), `"file_cooldown_hours": 0`) {
 		t.Fatalf("迁移结果未落盘：%s", string(b))
 	}
 	// 幂等：把值改回 6 再加载，因版本已是 1 而不再迁移。
@@ -152,5 +154,61 @@ func TestMustLoadConfig_MigratesLegacyCooldown(t *testing.T) {
 	}
 	if got := currentConfig().FileCooldownHours; got != 6 {
 		t.Fatalf("已迁移版本不应再次改写用户值，实际 %d", got)
+	}
+}
+
+// TestMustLoadConfig_MigratesEventScanInterval 复现存量用户场景：磁盘上的旧 config.json
+// （无 config_version 且不含 event_scan_min_interval_minutes）升级启动时，应被一次性迁移为
+// 默认 5 分钟并落盘——否则 F2 扫描冷却对「报障的存量用户」形同不存在（反序列化得 0=关闭）。
+// 并断言：版本已是最新（2）且用户显式设 0（关闭冷却）的配置不得被改写（尊重「关闭冷却」意图）。
+func TestMustLoadConfig_MigratesEventScanInterval(t *testing.T) {
+	dir := t.TempDir()
+	oldCfgPath, oldRecPath, oldLogPath := configPath, recordsPath, logPath
+	stateMu.Lock()
+	oldCfg := cfg
+	stateMu.Unlock()
+	configPath = filepath.Join(dir, "config.json")
+	recordsPath = filepath.Join(dir, "records.jsonl")
+	logPath = filepath.Join(dir, "clean.log")
+	defer func() {
+		configPath, recordsPath, logPath = oldCfgPath, oldRecPath, oldLogPath
+		stateMu.Lock()
+		cfg = oldCfg
+		stateMu.Unlock()
+	}()
+
+	// 旧版本配置：无 config_version（→0）且不含新字段（→0）。启动后应迁移为 5 并落盘。
+	legacy := `{"address":"127.0.0.1:19798","token":"tok","enable_push":true,"tasks":["/电影"]}`
+	if err := os.WriteFile(configPath, []byte(legacy), 0600); err != nil {
+		t.Fatalf("写旧配置失败: %v", err)
+	}
+	if err := mustLoadConfig(); err != nil {
+		t.Fatalf("mustLoadConfig: %v", err)
+	}
+	c := currentConfig()
+	if c.EventScanMinIntervalMinutes != 5 {
+		t.Fatalf("旧配置升级后事件扫描最小间隔应为 5，实际 %d", c.EventScanMinIntervalMinutes)
+	}
+	if c.ConfigVersion != currentConfigVersion {
+		t.Fatalf("迁移后 config_version=%d，期望 %d", c.ConfigVersion, currentConfigVersion)
+	}
+	if len(c.Tasks) != 1 || c.Tasks[0] != "/电影" {
+		t.Fatalf("迁移不应丢失既有字段，tasks=%v", c.Tasks)
+	}
+	b, _ := os.ReadFile(configPath)
+	if want := fmt.Sprintf(`"event_scan_min_interval_minutes": %d`, 5); !strings.Contains(string(b), want) {
+		t.Fatalf("迁移结果未落盘（应含 %s）：%s", want, string(b))
+	}
+
+	// 尊重用户意图：版本已是最新且显式设 0 → 不得改写成 5。
+	cur := fmt.Sprintf(`{"config_version":%d,"event_scan_min_interval_minutes":0,"token":"tok"}`, currentConfigVersion)
+	if err := os.WriteFile(configPath, []byte(cur), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := mustLoadConfig(); err != nil {
+		t.Fatal(err)
+	}
+	if got := currentConfig().EventScanMinIntervalMinutes; got != 0 {
+		t.Fatalf("版本已是最新时不得改写用户显式设置的 0（关闭冷却），实际 %d", got)
 	}
 }

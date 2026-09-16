@@ -39,19 +39,31 @@ type Config struct {
 }
 
 // currentConfigVersion 是当前配置结构版本。新增需要迁移的语义变更时 +1，并在 migrateConfig 里补一段。
-const currentConfigVersion = 1
+const currentConfigVersion = 2
 
 // migrateConfig 对历史配置做一次性、幂等的迁移（由 ConfigVersion 控制）。
+// 每一步仅对「尚未经历该步」的旧版本生效（按来源版本判定），因此对任意版本都幂等，
+// 也不会把「已迁移到新语义后用户又显式改回」的值再改一次。
+//
 // v0→v1：旧的 file_cooldown_hours 默认值为 6，会让「刚完成的离线下载」在 6 小时内
 // 不被清理——与新默认（0 = 立即清理）及用户意图不符。若该值仍是旧默认 6，则迁移为 0；
 // 用户显式设置的其他值一概不动。
+//
+// v1→v2：新增 event_scan_min_interval_minutes（F2 事件驱动扫描最小间隔）。
+// 旧配置不含该字段，反序列化得 0（=关闭冷却），升级后 F2 将对存量用户形同不存在；
+// 故对 v<2 一律置为新默认 5 分钟（旧版本不可能显式设过该字段，置 5 正确且幂等）。
+// 注意：0 是「关闭冷却」的合法用户意图，normalizeConfig 不得把 0 改成 5——补默认只在迁移里做。
 func migrateConfig(c Config) Config {
 	if c.ConfigVersion >= currentConfigVersion {
 		return c
 	}
-	if c.FileCooldownHours == 6 {
+	if c.ConfigVersion < 1 && c.FileCooldownHours == 6 {
 		c.FileCooldownHours = 0
 		appendLog("配置迁移 v0→v1：文件冷却 6 小时 → 0（立即清理）；如需保留冷却请在页面「文件冷却小时」改回")
+	}
+	if c.ConfigVersion < 2 {
+		c.EventScanMinIntervalMinutes = 5
+		appendLog("配置迁移 v1→v2：事件扫描最小间隔设为默认 5 分钟（可在页面「事件扫描最小间隔（分钟）」调整；填 0 关闭冷却）")
 	}
 	c.ConfigVersion = currentConfigVersion
 	return c

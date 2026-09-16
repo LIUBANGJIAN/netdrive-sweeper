@@ -198,3 +198,90 @@ func TestEventScanMinIntervalConfig(t *testing.T) {
 		t.Fatalf("超范围值应回退默认 5，实际 %d", got)
 	}
 }
+
+// ==================== F2：持续涓流不得饥饿（验证者要求的覆盖空白）====================
+
+// TestEventScanCooldown_SustainedTrickleNotStarved 模拟「稳定涓流」：每 10ms 一个范围内事件，
+// 冷却 200ms、防抖 50ms，持续约 1s。maxDelay（=6×debounce=300ms）保证突发仍会被强制触发，
+// 因此扫描次数必须「有界且 >= 1」。若冷却实现退化成「绝对 now+interval 排期」而从不落地，
+// 或在冷却中把排期无限后推，则次数会掉到 0——这条正是用来钉死该退化。
+func TestEventScanCooldown_SustainedTrickleNotStarved(t *testing.T) {
+	defer withTempPaths(t)()
+	withPushGlobals(t)
+	withCleanScope(t, []string{"/私存入库"}, "/BON_115网盘")
+
+	var n int64
+	p := newPushConsumer(nil, 50*time.Millisecond, func() { atomic.AddInt64(&n, 1) })
+	p.log = func(string, ...any) {}
+	p.minInterval = 200 * time.Millisecond
+
+	deadline := time.Now().Add(1 * time.Second)
+	for time.Now().Before(deadline) {
+		p.onEvent(PushEvent{Type: 4, Path: "/BON_115网盘/私存入库/x"})
+		time.Sleep(10 * time.Millisecond)
+	}
+	// 留足时间让末尾触发（trailing）落地后再取值。
+	time.Sleep(400 * time.Millisecond)
+
+	got := atomic.LoadInt64(&n)
+	if got < 1 {
+		t.Fatalf("持续涓流下扫描被饿死（触发 %d 次）：冷却实现可能退化为绝对排期", got)
+	}
+	if got > 12 {
+		t.Fatalf("持续涓流下触发次数异常偏多（%d 次），冷却未生效", got)
+	}
+}
+
+// ==================== F2：rearm() 不得绕过冷却（验证者要求的覆盖空白）====================
+
+// TestEventScanCooldown_RearmRespectsCooldown 断言「扫描繁忙重试」路径（rearm）也必须经过冷却闸门：
+// 冷却期内 rearm 的防抖到期后不得在窗口内触发扫描；冷却结束后应补一次触发（末尾触发不被丢弃）。
+func TestEventScanCooldown_RearmRespectsCooldown(t *testing.T) {
+	defer withTempPaths(t)()
+	withPushGlobals(t)
+	withCleanScope(t, []string{"/私存入库"}, "/BON_115网盘")
+
+	var n int64
+	p := newPushConsumer(nil, 30*time.Millisecond, func() { atomic.AddInt64(&n, 1) })
+	p.log = func(string, ...any) {}
+	p.minInterval = 400 * time.Millisecond
+
+	// 首个范围内事件：lastTriggerAt 为 0 → 立即触发一次并进入冷却。
+	p.onEvent(PushEvent{Type: 4, Path: "/BON_115网盘/私存入库/a"})
+	waitUntil(t, func() bool { return atomic.LoadInt64(&n) == 1 }, time.Second, "首个范围内事件应触发一次")
+
+	// 冷却期内 rearm()：其防抖到期后仍受冷却约束，不得在窗口内触发。
+	p.rearm()
+	time.Sleep(150 * time.Millisecond)
+	if got := atomic.LoadInt64(&n); got != 1 {
+		t.Fatalf("rearm 在冷却窗口内不得触发扫描，实际 %d 次", got)
+	}
+	// 冷却结束：rearm 重排的末尾触发应补一次，保证该轮突发不被丢弃。
+	waitUntil(t, func() bool { return atomic.LoadInt64(&n) >= 2 }, 900*time.Millisecond, "冷却结束后 rearm 的重试应补一次触发")
+}
+
+// ==================== F1：非 FSC 事件经 onEvent 不触发（验证者要求的覆盖空白）====================
+
+// TestOnEvent_NonFSCDoesNotTrigger 断言非文件系统变更（如 UPDATE_STATUS=2）经 onEvent 不触发扫描，
+// 但仍刷新订阅存活证据（LastMessageAt），且不被误计入「范围外忽略」（它不是清理范围内的概念）。
+func TestOnEvent_NonFSCDoesNotTrigger(t *testing.T) {
+	defer withTempPaths(t)()
+	withPushGlobals(t)
+	withCleanScope(t, []string{"/私存入库"}, "/BON_115网盘")
+
+	var n int64
+	p := newPushConsumer(nil, 20*time.Millisecond, func() { atomic.AddInt64(&n, 1) })
+	p.log = func(string, ...any) {}
+
+	p.onEvent(PushEvent{Type: 2}) // UPDATE_STATUS 等非文件系统变更
+	time.Sleep(10 * p.debounce)
+	if got := atomic.LoadInt64(&n); got != 0 {
+		t.Fatalf("非 FSC 事件不应触发扫描，实际 %d 次", got)
+	}
+	if pushSnapshot().LastMessageAt == "" {
+		t.Fatal("非 FSC 事件到达也应刷新 LastMessageAt（订阅存活证据）")
+	}
+	if ig := pushSnapshot().IgnoredEvents; ig != 0 {
+		t.Fatalf("非 FSC 事件不应计入 ignoredEvents，实际 %d", ig)
+	}
+}
