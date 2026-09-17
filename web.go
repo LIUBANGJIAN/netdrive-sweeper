@@ -219,6 +219,17 @@ details.adv .adv-body{padding:0 12px 12px}
 .dirpick{max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:var(--r-md);background:var(--bg)}
 .dirpick .diritem:last-child{border-bottom:0}
 
+/* ---------- focus visibility (keyboard) ---------- */
+/* 键盘 Tab 走查的可见焦点环：统一用 --blue 描边 + color-mix 微光晕，暗/亮底上均清晰。
+   仅补此前缺失的元素；已达标的 .btn:focus-visible 与 .formgroup input:focus 保持原样。
+   .tab 与 details>summary 用内描边（负偏移）：既避免被 .tabs 的 overflow 裁掉，也不压掉页签选中下划线。 */
+.tab:focus-visible{outline:2px solid var(--blue);outline-offset:-2px}
+details.adv > summary:focus-visible{outline:2px solid var(--blue);outline-offset:-2px}
+#logSearch:focus-visible,.tblbar input[type=text]:focus-visible,.tblbar select:focus-visible,
+.chip:focus-visible,.mini:focus-visible,.backlatest:focus-visible,
+.check input:focus-visible,.diritem input[type=checkbox]:focus-visible,
+.modal-input:focus-visible{outline:2px solid var(--blue);outline-offset:2px;box-shadow:0 0 0 3px color-mix(in srgb,var(--blue) 28%,transparent)}
+
 /* ---------- responsive ---------- */
 @media(max-width:1199px){.grid,.grid2{grid-template-columns:1fr}}
 @media(max-width:767px){
