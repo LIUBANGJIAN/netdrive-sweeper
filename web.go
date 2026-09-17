@@ -15,11 +15,13 @@ const pageHTML = `<!doctype html>
 /* 设计令牌：默认暗色（现代 SaaS 深空蓝）。亮色经 @media (prefers-color-scheme:light) 覆盖同名令牌。
    仅换令牌值 + 打磨排版/圆角/阴影，不改结构、不改内联脚本、不改任何 id/class/文案。
    可访问性微调：--success-bg/--success-hover 调深（#047857/#065F46）使白字主按钮两态两主题均 >=4.5:1；
+   新增 --danger-hover 承载红按钮 hover 背景（#B91C1C）、并把暗色 --info-hover 调深（#1D4ED8），
+   使「ok/危险」按钮悬停态白字也 >=4.5:1（--danger 本身保持浅色，仍供描边/强调用，未改）；
    亮色 --muted 由 #64748B→#5B6B7E，使次要文字在 --panel/--card/--bg 各浅底均 >=4.5:1。 */
 :root{color-scheme:dark;--bg:#0B1120;--panel:#0F1729;--card:#182034;--line:#22304A;--line-soft:#1A2236;--text:#E8EDF7;--text-dim:#C3CEE1;--muted:#8A9AB5;--log-bg:#070C16;
 --blue:#6D8DFF;--green:#34D399;--red:#F87171;--orange:#FBBF24;--purple:#A78BFA;
---danger:#F87171;--danger-bg:#DC2626;--danger-text:#FCA5A5;--success:#34D399;--success-bg:#047857;--success-hover:#065F46;--success-text:#6EE7B7;
---warning:#F59E0B;--warning-bg:#3A2A0A;--warning-text:#FCD34D;--info:#6D8DFF;--info-bg:#2563EB;--info-hover:#3B82F6;
+--danger:#F87171;--danger-bg:#DC2626;--danger-hover:#B91C1C;--danger-text:#FCA5A5;--success:#34D399;--success-bg:#047857;--success-hover:#065F46;--success-text:#6EE7B7;
+--warning:#F59E0B;--warning-bg:#3A2A0A;--warning-text:#FCD34D;--info:#6D8DFF;--info-bg:#2563EB;--info-hover:#1D4ED8;
 --ok-bg:#064E3B;--ok-text:#6EE7B7;--bad-bg:#4C0519;--bad-text:#FCA5A5;
 --shadow-1:0 1px 2px rgba(0,0,0,.35);--shadow-2:0 6px 18px rgba(0,0,0,.35);--shadow-3:0 18px 44px rgba(0,0,0,.5);
 --head-bg:rgba(15,23,41,.82);--mask:rgba(3,7,18,.72);
@@ -31,7 +33,7 @@ const pageHTML = `<!doctype html>
    注：--muted 由设计稿的 #64748B 微调为 #5B6B7E，使其在 --panel/--card/--bg 三种浅色底上均 >=4.5:1。 */
 @media (prefers-color-scheme:light){:root{color-scheme:light;--bg:#F6F8FC;--panel:#FFFFFF;--card:#F1F5F9;--line:#E3E8F0;--line-soft:#EEF2F8;--text:#0F172A;--text-dim:#334155;--muted:#5B6B7E;--log-bg:#F8FAFC;
 --blue:#2563EB;--green:#059669;--red:#DC2626;--orange:#D97706;--purple:#7C3AED;
---danger:#DC2626;--danger-bg:#DC2626;--danger-text:#B91C1C;--success:#059669;--success-bg:#047857;--success-hover:#065F46;--success-text:#047857;
+--danger:#DC2626;--danger-bg:#DC2626;--danger-hover:#B91C1C;--danger-text:#B91C1C;--success:#059669;--success-bg:#047857;--success-hover:#065F46;--success-text:#047857;
 --warning:#D97706;--warning-bg:#FEF3C7;--warning-text:#92400E;--info:#2563EB;--info-bg:#2563EB;--info-hover:#1D4ED8;
 --ok-bg:#DCFCE7;--ok-text:#166534;--bad-bg:#FEE2E2;--bad-text:#991B1B;
 --shadow-1:0 1px 2px rgba(15,23,42,.06),0 1px 3px rgba(15,23,42,.08);--shadow-2:0 4px 14px rgba(15,23,42,.10);--shadow-3:0 20px 48px rgba(15,23,42,.18);
@@ -103,7 +105,7 @@ section.tabpane.active{display:grid;gap:var(--s4);align-content:start}
 .btn:active:not(:disabled){transform:translateY(1px)}
 .btn-primary{background:var(--success-bg);color:#fff}.btn-primary:hover:not(:disabled){background:var(--success-hover)}
 .btn-ok{background:var(--info-bg);color:#fff}.btn-ok:hover:not(:disabled){background:var(--info-hover)}
-.btn-danger{background:var(--danger-bg);color:#fff}.btn-danger:hover:not(:disabled){background:var(--danger)}
+.btn-danger{background:var(--danger-bg);color:#fff}.btn-danger:hover:not(:disabled){background:var(--danger-hover)}
 .btn-ghost{background:var(--bg);border:1px solid var(--line);color:var(--text)}.btn-ghost:hover:not(:disabled){background:var(--card)}
 .btn-sm{padding:5px 10px;font-size:13px}
 .actions{display:flex;gap:var(--s2);flex-wrap:wrap;margin-top:var(--s3)}
