@@ -31,14 +31,15 @@ func TestWebUX_HideReadyLineAndUnifyChecks(t *testing.T) {
 		// 结构性重构：日志页改为「全高工作区」——日志容器 flex 撑满内容区剩余高度（替代旧写死 calc(100vh - 340px)）。
 		"#tab-logs.tabpane.active{display:flex",
 		".logbox{width:100%;height:auto;min-height:320px",
-		// 前端 pushLive 与后端 pushEvidenceWindow 同口径的时间窗判据。
-		"parseTS(lastPush.lastMessageAt)",
+		// 前端 pushLive 与后端 pushEvidenceWindow 同口径的时间窗判据（2026-09-17 更正：
+		// 证据改为 lastFileEventAt——LOG_MESSAGE=7 是 CD2 自身日志广播，不能证明文件事件通道存活）。
+		"parseTS(lastPush.lastFileEventAt)",
 		"<=600000",
 		// 该筛选子串被 qa3 结构断言 pin 住，必须保留。
 		"lastStatus.cloudApis.filter(function(a){return a.isCloudEventListenerRunning===false})",
-		// 分级提示的两种文案（有证据 / 无证据）。
-		"已确证仍能收到该云盘的推送消息",
-		"该标记仅表示 CD2 的云端原生推送通道未开启",
+		// 分级提示的两种文案（有文件事件证据 / 无证据）。
+		"已确证仍能收到文件变更事件",
+		"且最近未收到任何文件变更事件",
 	}
 	for _, m := range must {
 		if !strings.Contains(pageHTML, m) {

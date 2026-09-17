@@ -140,6 +140,7 @@ func (p *pushConsumer) onEvent(ev PushEvent) {
 	// 任意类型的推送到达都是「订阅存活」的证据。
 	markPushMessage(ev.Type)
 	if isFileSystemChange(ev.Type) {
+		markFileEvent() // 文件事件通道证据：任何 FSC 事件（无论是否在清理范围内）都刷新 LastFileEventAt
 		if eventInCleanScope(ev.Path, currentConfig().Tasks, currentTokenRoot()) {
 			p.logFileSystemChange(ev) // 范围内事件：保留明细
 			markPushEventPath(ev.Path)

@@ -43,15 +43,16 @@ var (
 // 「运行中 / 未启用 / 权限不足 / 连接失败重试中」。这是修复「改配置后必须重启容器、
 // 否则事件驱动静默失效且毫无解释」的关键——把隐性约束变成显式状态。
 type PushRuntime struct {
-	State         string        `json:"state"`                   // off|config_missing|connecting|running|denied|error
-	Detail        string        `json:"detail"`                  // 人类可读说明
-	Since         string        `json:"since"`                   // 进入该状态的时间
-	Events        int           `json:"events"`                  // 已收到的（范围内）文件系统变更事件数
-	IgnoredEvents int           `json:"ignoredEvents"`           // 被忽略的「清理范围外/无路径」变更事件数（F1/F3）
-	LastEvent     string        `json:"lastEvent"`               // 最近一次文件系统变更事件时间
-	LastEventPath string        `json:"lastEventPath,omitempty"` // 最近一次文件系统变更事件的路径（尽力而为提取）
-	LastMessageAt string        `json:"lastMessageAt,omitempty"` // 最近一次收到任意类型推送消息的时间（订阅存活证据）
-	TypeCounts    map[int32]int `json:"typeCounts,omitempty"`    // 各 messageType 的累计到达次数
+	State           string        `json:"state"`                     // off|config_missing|connecting|running|denied|error
+	Detail          string        `json:"detail"`                    // 人类可读说明
+	Since           string        `json:"since"`                     // 进入该状态的时间
+	Events          int           `json:"events"`                    // 已收到的（范围内）文件系统变更事件数
+	IgnoredEvents   int           `json:"ignoredEvents"`             // 被忽略的「清理范围外/无路径」变更事件数（F1/F3）
+	LastEvent       string        `json:"lastEvent"`                 // 最近一次文件系统变更事件时间
+	LastEventPath   string        `json:"lastEventPath,omitempty"`   // 最近一次文件系统变更事件的路径（尽力而为提取）
+	LastMessageAt   string        `json:"lastMessageAt,omitempty"`   // 最近一次收到任意类型推送消息的时间（含 CD2 自身日志广播，仅证明 gRPC 流活着）
+	LastFileEventAt string        `json:"lastFileEventAt,omitempty"` // 最近一次收到 FILE_SYSTEM_CHANGE(=4) 的时间（文件事件通道存活的证据，与 LastMessageAt 严格区分）
+	TypeCounts      map[int32]int `json:"typeCounts,omitempty"`      // 各 messageType 的累计到达次数
 
 	// —— 存活可观测性（D5）：让前端能区分「流活着但恰好没事件」与「流已经死了」 ——
 	Gen          int64  `json:"gen"`                    // 当前订阅世代（每次起/重启 +1；用于识别过期写入）
@@ -432,19 +433,20 @@ func pushSnapshot() PushRuntime {
 	return s
 }
 
-// pushEvidenceWindow 是「订阅仍被证据支撑」的时间窗：最近一次收到推送消息在此窗口内，
-// 即说明 CD2 确实仍在投递事件，无论 isCloudEventListenerRunning 上报什么。
+// pushEvidenceWindow 是「文件事件通道仍被证据支撑」的时间窗：最近一次收到
+// FILE_SYSTEM_CHANGE(=4)（无论是否在清理范围内）在此窗口内，即说明 CD2 仍在投递文件变更事件。
 const pushEvidenceWindow = 10 * time.Minute
 
-// pushHasLiveEvidence 判断是否已有「CD2 正在投递事件」的确凿证据：订阅 running 且最近一次
-// 收到任意推送消息在 pushEvidenceWindow 之内。用于压制 isCloudEventListenerRunning=false 的误报
-// （实证：某云盘上报 false，但程序持续收到 changeType=1/2 事件并完成删除）。
+// pushHasLiveEvidence 判断是否已有「CD2 正在投递文件变更事件」的确凿证据：订阅 running 且
+// 最近一次收到 FILE_SYSTEM_CHANGE(=4) 在 pushEvidenceWindow 之内。
+// 绝不能用 LastMessageAt（任意类型）作证据：LOG_MESSAGE=7 是 CD2 自身的日志广播，与各云盘
+// 文件事件通道是否存活无关——用它会把「心跳还在、文件事件已断流」误判为健康（2026-09-17 线上实例）。
 func pushHasLiveEvidence() bool {
 	s := pushSnapshot()
-	if s.State != "running" || s.LastMessageAt == "" {
+	if s.State != "running" || s.LastFileEventAt == "" {
 		return false
 	}
-	t, err := time.ParseInLocation("2006-01-02 15:04:05", s.LastMessageAt, time.Local)
+	t, err := time.ParseInLocation("2006-01-02 15:04:05", s.LastFileEventAt, time.Local)
 	if err != nil {
 		return false
 	}
@@ -557,7 +559,9 @@ func bumpPushEvent() {
 	pushMu.Unlock()
 }
 
-// markPushMessage 记录「收到任意类型推送消息」的时间与类型计数——这是订阅存活的唯一可信证据。
+// markPushMessage 记录「收到任意类型推送消息」的时间与类型计数。
+// 注意：任意消息（含 CD2 自身日志广播 LOG_MESSAGE=7）只能证明 gRPC 流活着，
+// 不能证明文件变更事件仍在投递——后者见 markFileEvent / LastFileEventAt。
 func markPushMessage(messageType int32) {
 	pushMu.Lock()
 	if pushStat.TypeCounts == nil {
@@ -565,6 +569,16 @@ func markPushMessage(messageType int32) {
 	}
 	pushStat.TypeCounts[messageType]++
 	pushStat.LastMessageAt = time.Now().Format("2006-01-02 15:04:05")
+	pushMu.Unlock()
+}
+
+// markFileEvent 记录「收到 FILE_SYSTEM_CHANGE(=4)」的时间（无论事件是否落在清理范围内）。
+// 这是文件事件通道存活的唯一可信证据：LOG_MESSAGE=7 等日志广播与云盘文件事件通道是否
+// 存活无关（2026-09-17 线上实例：四个云盘监听器全部未运行、文件事件断流，但 type=7 心跳
+// 不断，曾据此误判「订阅存活，无需处理」）。
+func markFileEvent() {
+	pushMu.Lock()
+	pushStat.LastFileEventAt = time.Now().Format("2006-01-02 15:04:05")
 	pushMu.Unlock()
 }
 
@@ -1078,11 +1092,12 @@ func checkCloudEventListeners(ctx context.Context, c Config, lastKey string) str
 }
 
 // cloudListenerReport 依据云盘列表生成「需要记录的日志行」与稳定签名 key。
-// 纯函数，便于单测。pushLive 表示「本程序已确证仍在收到推送」（见 pushHasLiveEvidence）：
+// 纯函数，便于单测。pushLive 表示「本程序已确证仍在收到文件变更事件（FILE_SYSTEM_CHANGE）」
+// （见 pushHasLiveEvidence；注意与「收到任意推送消息」区分——日志广播不算证据）：
 //   - isCloudEventListenerRunning=true：运行中提示；
 //   - false 且 pushLive：说明该标记并不代表推送会停，降级为提示，避免误报（实证场景）；
-//   - false 且 !pushLive：提示（不再作「推送会停止」式的绝对化断言），
-//     说明该标记仅指云端原生通道，CD2 仍可能通过自身变更检测投递，并给出排查建议。
+//   - false 且 !pushLive：给出可执行的排查建议（该标记仅指云端原生通道；若文件事件断流，
+//     请检查云盘连接/重启 CD2，期间可用「手动清理」兜底）。
 //
 // key 里含 pushLive，故「证据状态翻转」也会重记日志（否则只翻转证据时不会重新记录）。
 func cloudListenerReport(apis []CloudAPI, pushLive bool) (lines []string, key string) {
@@ -1095,12 +1110,12 @@ func cloudListenerReport(apis []CloudAPI, pushLive bool) (lines []string, key st
 		}
 		if pushLive {
 			lines = append(lines, fmt.Sprintf(
-				"提示：CD2 云盘「%s」的云端原生事件监听器未运行（isCloudEventListenerRunning=false）；但本程序已确证仍能收到该云盘的推送消息（订阅存活），事件驱动清理不受影响，无需处理。",
+				"提示：CD2 云盘「%s」的云端原生事件监听器未运行（isCloudEventListenerRunning=false）；但本程序已确证仍能收到该云盘的文件变更事件（FILE_SYSTEM_CHANGE，订阅存活），事件驱动清理不受影响，无需处理。",
 				a.Name))
 			continue
 		}
 		lines = append(lines, fmt.Sprintf(
-			"提示：CD2 云盘「%s」的云端原生事件监听器未运行（isCloudEventListenerRunning=false）。该标记仅表示 CD2 的云端原生推送通道未开启，CD2 仍可能通过自身变更检测投递事件；若长时间收不到该云盘的变更事件，请检查该云盘连接/重新登录。",
+			"警示：CD2 云盘「%s」的云端原生事件监听器未运行（isCloudEventListenerRunning=false），且最近未收到任何文件变更事件（FILE_SYSTEM_CHANGE）——此状态下文件变更可能不会被推送到，事件驱动清理可能失效。请到 CD2 检查该云盘连接/重新登录，或重启 CD2 后在页面点「保存配置」重订阅；期间请用「手动清理」兜底。",
 			a.Name))
 	}
 	parts = append(parts, fmt.Sprintf("pushLive=%v", pushLive))

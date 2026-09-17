@@ -591,17 +591,18 @@ function renderPush(p){
   if(lastStatus&&lastStatus.cloudApis&&lastStatus.cloudApis.length){
     var down=lastStatus.cloudApis.filter(function(a){return a.isCloudEventListenerRunning===false});
     /* 与后端 pushEvidenceWindow（main.go，10 分钟）同口径：订阅 running 且最近一次收到
-       推送消息在 10 分钟内，才算「已确证仍在投递」。不用累计 events——它有粘性（只增不减），
-       会在订阅已死时仍显示健康。 */
+       FILE_SYSTEM_CHANGE(=4)（无论是否在清理范围内）在 10 分钟内，才算「已确证仍在投递文件事件」。
+       不能用 lastMessageAt——LOG_MESSAGE=7 是 CD2 自身的日志广播，与文件事件通道是否存活无关，
+       用它会把「心跳还在、文件事件已断流」误判为健康（2026-09-17 线上实例）。 */
     var pushLive=false;
     if(lastPush.state==='running'){
-      var lm=parseTS(lastPush.lastMessageAt);
-      pushLive=!!lm&&(Date.now()-lm)<=600000;
+      var lf=parseTS(lastPush.lastFileEventAt);
+      pushLive=!!lf&&(Date.now()-lf)<=600000;
     }
     if(down.length&&!pushLive){
-      html+='<div class="banner banner-warn">提示：CD2 云盘「'+down.map(function(a){return esc(a.name)}).join('、')+'」的云端原生事件监听器未运行（isCloudEventListenerRunning=false）。该标记仅表示 CD2 的云端原生推送通道未开启，CD2 仍可能通过自身变更检测投递事件；若长时间收不到变更事件，请检查该云盘连接/重新登录。</div>';
+      html+='<div class="banner banner-warn">警示：CD2 云盘「'+down.map(function(a){return esc(a.name)}).join('、')+'」的云端原生事件监听器未运行，且最近未收到任何文件变更事件——此状态下事件驱动清理可能失效。请到 CD2 检查该云盘连接/重新登录或重启 CD2，回来后点「保存配置」重订阅；期间请用「手动清理」兜底。</div>';
     }else if(down.length&&pushLive){
-      html+='<div class="banner banner-info">CD2 云盘「'+down.map(function(a){return esc(a.name)}).join('、')+'」上报云端原生事件监听器未运行，但本程序已确证仍能收到该云盘的推送消息，事件驱动清理不受影响。</div>';
+      html+='<div class="banner banner-info">CD2 云盘「'+down.map(function(a){return esc(a.name)}).join('、')+'」上报云端原生事件监听器未运行，但本程序已确证仍能收到文件变更事件（FILE_SYSTEM_CHANGE），事件驱动清理不受影响。</div>';
     }
   }
   el('pushHint').innerHTML=html;

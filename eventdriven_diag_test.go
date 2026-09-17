@@ -403,19 +403,25 @@ func TestDiag_ReconnectJitterBounded(t *testing.T) {
 
 // ==================== (d) GetAllCloudApis 解析 + 仅变化时记一次 ====================
 
-// d1: cloudListenerReport——isCloudEventListenerRunning=false 的文案按「是否有仍能收到推送的证据」分级：
-// 无证据时产出提示（不再绝对化断言）；有证据时产出「已确证仍能收到」的提示，避免误报。
+// d1: cloudListenerReport——isCloudEventListenerRunning=false 的文案按「是否仍能收到文件变更事件」分级：
+// 无文件事件证据时产出「警示」（给出可执行排查建议，不再误称「无需处理」）；
+// 有证据（最近收到 FILE_SYSTEM_CHANGE）时产出「已确证仍能收到文件变更事件」的提示，避免误报。
+// 2026-09-17 更正：证据必须是 FILE_SYSTEM_CHANGE——LOG_MESSAGE=7 是 CD2 自身日志广播，
+// 与文件事件通道是否存活无关（线上曾据此误判「订阅存活，无需处理」）。
 func TestDiag_CloudListenerReport_GradedByEvidence(t *testing.T) {
-	// pushLive=false：非绝对化提示，不再出现吓人的「警告」与「CD2 将不再推送文件变更事件」。
+	// pushLive=false：警示级，带可执行建议；不出现旧的「无需处理」误判，也不作绝对化断言。
 	lines, key := cloudListenerReport([]CloudAPI{{Name: "115", IsCloudEventListenerRunning: false}}, false)
 	if len(lines) != 1 {
 		t.Fatalf("应产出 1 行，实际 %d", len(lines))
 	}
-	if !strings.Contains(lines[0], "提示") || !strings.Contains(lines[0], "未运行") {
-		t.Fatalf("false 应产提示，实际 %q", lines[0])
+	if !strings.Contains(lines[0], "警示") || !strings.Contains(lines[0], "未运行") {
+		t.Fatalf("false 应产警示，实际 %q", lines[0])
 	}
-	if strings.Contains(lines[0], "警告") {
-		t.Fatalf("不应再出现「警告」绝对化措辞，实际 %q", lines[0])
+	if !strings.Contains(lines[0], "手动清理") {
+		t.Fatalf("无证据警示应给出「手动清理」兜底建议，实际 %q", lines[0])
+	}
+	if strings.Contains(lines[0], "无需处理") {
+		t.Fatalf("无文件事件证据时不得再声称「无需处理」，实际 %q", lines[0])
 	}
 	if strings.Contains(lines[0], "CD2 将不再推送文件变更事件") {
 		t.Fatalf("不应再出现「CD2 将不再推送文件变更事件」的绝对化断言，实际 %q", lines[0])
@@ -424,10 +430,13 @@ func TestDiag_CloudListenerReport_GradedByEvidence(t *testing.T) {
 		t.Fatalf("key 应为 115=false;pushLive=false，实际 %q", key)
 	}
 
-	// pushLive=true：降级为「已确证仍能收到」的提示。
+	// pushLive=true：降级为「已确证仍能收到文件变更事件」的提示。
 	linesLive, keyLive := cloudListenerReport([]CloudAPI{{Name: "115", IsCloudEventListenerRunning: false}}, true)
 	if len(linesLive) != 1 || !strings.Contains(linesLive[0], "已确证仍能收到") {
 		t.Fatalf("pushLive=true 应产「已确证仍能收到」提示，实际 %v", linesLive)
+	}
+	if !strings.Contains(linesLive[0], "FILE_SYSTEM_CHANGE") {
+		t.Fatalf("pushLive=true 的证据口径必须是 FILE_SYSTEM_CHANGE，实际 %v", linesLive)
 	}
 	if !strings.Contains(keyLive, "pushLive=true") {
 		t.Fatalf("key 应含 pushLive=true，实际 %q", keyLive)
@@ -495,10 +504,10 @@ func TestDiag_ParseCloudAPIs_FromDynamicMessage(t *testing.T) {
 		t.Fatalf("第 2 个云盘解析错误：%+v", got[1])
 	}
 
-	// 关键链路：解析结果喂给 cloudListenerReport，必须对 false 的那个产提示（非绝对化告警）。
+	// 关键链路：解析结果喂给 cloudListenerReport，必须对 false 的那个产警示（无文件事件证据时）。
 	lines, key := cloudListenerReport(got, false)
-	if !strings.Contains(strings.Join(lines, "\n"), "提示") {
-		t.Fatalf("含 false 的解析结果应产提示，实际 %v", lines)
+	if !strings.Contains(strings.Join(lines, "\n"), "警示") {
+		t.Fatalf("含 false 的解析结果应产警示，实际 %v", lines)
 	}
 	if !strings.Contains(key, "115=false") {
 		t.Fatalf("key 应含 115=false，实际 %q", key)
@@ -555,6 +564,49 @@ func TestDiag_PushSnapshotCountsAndDeepCopy(t *testing.T) {
 	snap.TypeCounts[2] = 999
 	if pushSnapshot().TypeCounts[2] != 2 {
 		t.Fatal("pushSnapshot 未做深拷贝：外部改动污染了内部 map")
+	}
+}
+
+// p3: pushHasLiveEvidence 必须以 FILE_SYSTEM_CHANGE(=4) 为证据，任意消息（如 CD2 自身
+// 日志广播 LOG_MESSAGE=7）不能替代——2026-09-17 线上实例：四个云盘监听器全部未运行、
+// 文件事件断流，仅 type=7 心跳不断，曾据此误判「订阅存活，无需处理」。
+func TestDiag_PushLiveEvidence_RequiresFileEvent(t *testing.T) {
+	pushMu.Lock()
+	oldStat := pushStat
+	pushStat = PushRuntime{State: "running"}
+	pushMu.Unlock()
+	defer func() { pushMu.Lock(); pushStat = oldStat; pushMu.Unlock() }()
+
+	now := time.Now().Format("2006-01-02 15:04:05")
+	// 仅心跳（任意消息）：不算文件事件通道存活。
+	pushMu.Lock()
+	pushStat.LastMessageAt = now
+	pushStat.LastFileEventAt = ""
+	pushMu.Unlock()
+	if pushHasLiveEvidence() {
+		t.Fatal("仅收到任意消息（无 FILE_SYSTEM_CHANGE）不应判定为文件事件存活")
+	}
+	// 收到 FSC（无论是否在清理范围内）且在窗口内：算存活。
+	pushMu.Lock()
+	pushStat.LastFileEventAt = now
+	pushMu.Unlock()
+	if !pushHasLiveEvidence() {
+		t.Fatal("最近收到 FILE_SYSTEM_CHANGE 应判定为文件事件存活")
+	}
+	// 超过证据窗口：不算存活。
+	pushMu.Lock()
+	pushStat.LastFileEventAt = time.Now().Add(-pushEvidenceWindow - time.Minute).Format("2006-01-02 15:04:05")
+	pushMu.Unlock()
+	if pushHasLiveEvidence() {
+		t.Fatal("FILE_SYSTEM_CHANGE 超出证据窗口后不应判定为存活")
+	}
+	// 订阅未运行：即使时间戳新鲜也不算。
+	pushMu.Lock()
+	pushStat.State = "off"
+	pushStat.LastFileEventAt = now
+	pushMu.Unlock()
+	if pushHasLiveEvidence() {
+		t.Fatal("订阅未运行时不应判定为存活")
 	}
 }
 
