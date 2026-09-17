@@ -57,9 +57,9 @@ body{margin:0;background:radial-gradient(1200px 560px at 50% -220px,var(--bg-glo
 /* ---------- app shell（左侧栏控制台） ---------- */
 /* 结构性重构：外壳改为「左侧栏 + 右侧内容区」两栏控制台。仅搬动现有 DOM 节点 +
    新增 .app/.side/.content 三个结构容器；未改任何 id/class/脚本/文案。 */
-.app{display:grid;grid-template-columns:264px minmax(0,1fr);min-height:100vh}
+.app{display:grid;grid-template-columns:216px minmax(0,1fr);min-height:100vh}
 .side{position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:18px;padding:20px 16px;background:var(--panel);border-right:1px solid var(--line)}
-.side-meta{margin-top:auto;display:flex;flex-direction:column;gap:8px;padding-top:16px;border-top:1px solid var(--line)}
+.side-meta{margin-top:6px;display:flex;flex-direction:column;gap:8px;padding-top:16px;border-top:1px solid var(--line)}
 .side-meta .tb-meta{font-size:12px}
 .content{min-width:0;display:flex;flex-direction:column}
 h1,h2,h3{margin:0;letter-spacing:-.01em}
@@ -268,13 +268,13 @@ details.adv > summary:focus-visible{outline:2px solid var(--blue);outline-offset
 
 /* ---------- responsive ---------- */
 @media(max-width:1199px){.grid2{grid-template-columns:1fr}}
-/* 左侧栏在小屏折叠为顶部横向条；主体占满整宽，避免横向滚动。 */
+/* 左侧栏在小屏折叠为顶部横向条；主体占满整宽，避免横向滚动。状态区在小屏折成一行紧凑排布（不再隐藏，保证状态信息可见）。 */
 @media(max-width:900px){
  .app{grid-template-columns:1fr}
  .side{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line);padding:12px}
  .tabs{flex-direction:row;overflow-x:auto}
  .tab{width:auto}
- .side-meta{display:none}
+ .side-meta{flex-direction:row;flex-wrap:wrap;gap:6px 14px;margin-top:8px;padding-top:0;border-top:0}
 }
 @media(max-width:767px){
  .main{padding:12px}.topbar{padding:8px 12px}
