@@ -12,34 +12,47 @@ const pageHTML = `<!doctype html>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2358a6ff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 6h18'/%3E%3Cpath d='M8 6V4h8v2'/%3E%3Cpath d='M6 6l1 14h10l1-14'/%3E%3C/svg%3E">
 <title>{{.Title}}</title>
 <style>
-/* 设计令牌：默认暗色（现代 SaaS 深空蓝）。亮色经 @media (prefers-color-scheme:light) 覆盖同名令牌。
-   仅换令牌值 + 打磨排版/圆角/阴影，不改结构、不改内联脚本、不改任何 id/class/文案。
-   可访问性微调：--success-bg/--success-hover 调深（#047857/#065F46）使白字主按钮两态两主题均 >=4.5:1；
-   新增 --danger-hover 承载红按钮 hover 背景（#B91C1C）、并把暗色 --info-hover 调深（#1D4ED8），
-   使「ok/危险」按钮悬停态白字也 >=4.5:1（--danger 本身保持浅色，仍供描边/强调用，未改）；
-   亮色 --muted 由 #64748B→#5B6B7E，使次要文字在 --panel/--card/--bg 各浅底均 >=4.5:1。 */
-:root{color-scheme:dark;--bg:#0B1120;--panel:#0F1729;--card:#182034;--line:#22304A;--line-soft:#1A2236;--text:#E8EDF7;--text-dim:#C3CEE1;--muted:#8A9AB5;--log-bg:#070C16;
---blue:#6D8DFF;--green:#34D399;--red:#F87171;--orange:#FBBF24;--purple:#A78BFA;
---danger:#F87171;--danger-bg:#DC2626;--danger-hover:#B91C1C;--danger-text:#FCA5A5;--success:#34D399;--success-bg:#047857;--success-hover:#065F46;--success-text:#6EE7B7;
---warning:#F59E0B;--warning-bg:#3A2A0A;--warning-text:#FCD34D;--info:#6D8DFF;--info-bg:#2563EB;--info-hover:#1D4ED8;
---ok-bg:#064E3B;--ok-text:#6EE7B7;--bad-bg:#4C0519;--bad-text:#FCA5A5;
---shadow-1:0 1px 2px rgba(0,0,0,.35);--shadow-2:0 6px 18px rgba(0,0,0,.35);--shadow-3:0 18px 44px rgba(0,0,0,.5);
---head-bg:rgba(15,23,41,.82);--mask:rgba(3,7,18,.72);
+/* 设计令牌：默认暗色 = 近黑 + 靛紫（Linear/Vercel/Raycast 风）。亮色经 @media (prefers-color-scheme:light) 覆盖同名令牌。
+   本轮为「可见的视觉重构」：配色换新 + 布局/层次/圆角/阴影实质性改动；仅改本样式块，
+   不改内联脚本/id/class/文案/结构；token 名（--blue、--success、--info、--danger 系列）保留、只换值。
+   可访问性：实心按钮白字在 暗/亮 × 常态/hover 四态均 >=4.5:1；正文/次要文字 >=4.5:1；焦点环 >=3:1。 */
+:root{color-scheme:dark;
+--bg:#08090D;--bg-glow:rgba(124,108,255,.10);
+--panel:#0F1015;--card:#15171F;--card-2:#1B1E28;
+--line:#23262F;--line-soft:#1A1D25;
+--text:#F5F6F8;--text-dim:#C4C8D2;--muted:#868C99;
+--log-bg:#05060A;--row-hover:rgba(255,255,255,.035);
+--accent:#7C6CFF;--accent-2:#9B8CFF;--accent-bg:#5B4BE0;--accent-hover:#4B3FCC;
+--blue:#7C6CFF;--green:#2DD4A7;--red:#FF6B6B;--orange:#F5B544;--purple:#B18CFF;
+--danger:#FF6B6B;--danger-bg:#DC2626;--danger-hover:#B91C1C;--danger-text:#FF9B9B;
+--success:#2DD4A7;--success-bg:#047857;--success-hover:#065F46;--success-text:#6EE7B7;
+--warning:#F5B544;--warning-bg:#3A2A0A;--warning-text:#FCD34D;
+--info:#7C6CFF;--info-bg:#4338CA;--info-hover:#3730A3;
+--ok-bg:#0B3B30;--ok-text:#6EE7B7;--bad-bg:#4C1020;--bad-text:#FF9B9B;
+--shadow-1:0 1px 2px rgba(0,0,0,.40);--shadow-2:0 10px 30px rgba(0,0,0,.45);--shadow-3:0 24px 60px rgba(0,0,0,.60);
+--head-bg:rgba(15,16,21,.78);--mask:rgba(2,3,6,.74);
 --font-ui:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
 --font-mono:ui-monospace,SFMono-Regular,"JetBrains Mono","Cascadia Code",Consolas,monospace;
---r-sm:8px;--r-md:10px;--r-lg:14px;--r-xl:16px;--s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:24px;--s6:32px;
+--r-sm:10px;--r-md:12px;--r-lg:16px;--r-xl:20px;--s1:4px;--s2:8px;--s3:12px;--s4:20px;--s5:28px;--s6:40px;
 --z-header:100;--z-modal:300;--z-toast:400}
-/* 亮色主题：仅覆盖颜色/阴影/遮罩令牌（字体与圆角令牌沿用 :root），让原生控件与滚动条随主题切换。
-   注：--muted 由设计稿的 #64748B 微调为 #5B6B7E，使其在 --panel/--card/--bg 三种浅色底上均 >=4.5:1。 */
-@media (prefers-color-scheme:light){:root{color-scheme:light;--bg:#F6F8FC;--panel:#FFFFFF;--card:#F1F5F9;--line:#E3E8F0;--line-soft:#EEF2F8;--text:#0F172A;--text-dim:#334155;--muted:#5B6B7E;--log-bg:#F8FAFC;
---blue:#2563EB;--green:#059669;--red:#DC2626;--orange:#D97706;--purple:#7C3AED;
---danger:#DC2626;--danger-bg:#DC2626;--danger-hover:#B91C1C;--danger-text:#B91C1C;--success:#059669;--success-bg:#047857;--success-hover:#065F46;--success-text:#047857;
---warning:#D97706;--warning-bg:#FEF3C7;--warning-text:#92400E;--info:#2563EB;--info-bg:#2563EB;--info-hover:#1D4ED8;
+/* 亮色主题：同结构镜像（白底 + 同系靛紫强调），只覆盖颜色/阴影/遮罩/悬停令牌。 */
+@media (prefers-color-scheme:light){:root{color-scheme:light;
+--bg:#F7F8FA;--bg-glow:rgba(91,75,224,.07);
+--panel:#FFFFFF;--card:#FFFFFF;--card-2:#F2F4F8;
+--line:#E6E8EE;--line-soft:#EFF1F5;
+--text:#0B0C10;--text-dim:#3F4653;--muted:#666E7C;
+--log-bg:#F8FAFC;--row-hover:rgba(11,12,16,.04);
+--accent:#5B4BE0;--accent-2:#7C6CFF;--accent-bg:#5B4BE0;--accent-hover:#4B3FCC;
+--blue:#5B4BE0;--green:#0E9F6E;--red:#DC2626;--orange:#D97706;--purple:#7C3AED;
+--danger:#DC2626;--danger-bg:#DC2626;--danger-hover:#B91C1C;--danger-text:#B91C1C;
+--success:#0E9F6E;--success-bg:#047857;--success-hover:#065F46;--success-text:#047857;
+--warning:#D97706;--warning-bg:#FEF3C7;--warning-text:#92400E;
+--info:#5B4BE0;--info-bg:#4338CA;--info-hover:#3730A3;
 --ok-bg:#DCFCE7;--ok-text:#166534;--bad-bg:#FEE2E2;--bad-text:#991B1B;
---shadow-1:0 1px 2px rgba(15,23,42,.06),0 1px 3px rgba(15,23,42,.08);--shadow-2:0 4px 14px rgba(15,23,42,.10);--shadow-3:0 20px 48px rgba(15,23,42,.18);
---head-bg:rgba(255,255,255,.85);--mask:rgba(15,23,42,.42)}}
+--shadow-1:0 1px 2px rgba(16,18,30,.06),0 1px 3px rgba(16,18,30,.08);--shadow-2:0 8px 24px rgba(16,18,30,.10);--shadow-3:0 24px 56px rgba(16,18,30,.18);
+--head-bg:rgba(255,255,255,.82);--mask:rgba(11,12,16,.42)}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);font-family:var(--font-ui);color:var(--text);font-size:15px;min-height:100vh;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;line-height:1.55;transition:background-color .2s ease,color .2s ease}
+body{margin:0;background:radial-gradient(1200px 560px at 50% -220px,var(--bg-glow),transparent 72%),var(--bg);font-family:var(--font-ui);color:var(--text);font-size:15px;min-height:100vh;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;line-height:1.55;transition:background-color .2s ease,color .2s ease}
 h1,h2,h3{margin:0;letter-spacing:-.01em}
 a{color:var(--blue)}
 .mono{font-family:var(--font-mono)}
@@ -48,23 +61,24 @@ a{color:var(--blue)}
 .muted{color:var(--muted)}
 
 /* ---------- head (sticky) ---------- */
-.head{position:sticky;top:0;z-index:var(--z-header);background:var(--head-bg);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
-.topbar{padding:10px 18px;display:flex;flex-direction:column;gap:8px}
+.head{position:sticky;top:0;z-index:var(--z-header);background:var(--head-bg);-webkit-backdrop-filter:blur(16px) saturate(140%);backdrop-filter:blur(16px) saturate(140%);border-bottom:1px solid var(--line)}
+.topbar{padding:16px 24px;display:flex;flex-direction:column;gap:12px}
 .tb-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.brand{display:flex;align-items:center;gap:8px}
-.brand svg{width:18px;height:18px;stroke:var(--blue)}
-.brand h1{font-size:18px;font-weight:700;color:var(--blue)}
+.tb-row + .tb-row{padding-top:11px;border-top:1px solid var(--line-soft)}
+.brand{display:flex;align-items:center;gap:9px}
+.brand svg{width:20px;height:20px;stroke:var(--blue)}
+.brand h1{font-size:20px;font-weight:800;letter-spacing:-.02em;color:var(--text)}
 .conn{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
 .dot{width:8px;height:8px;border-radius:999px;background:var(--muted);flex:0 0 auto}
-.dot.ok{background:var(--green);box-shadow:0 0 8px rgba(63,185,80,.4)}
+.dot.ok{background:var(--green);box-shadow:0 0 10px color-mix(in srgb,var(--green) 55%,transparent)}
 .dot.connecting{background:var(--orange)}
 .dot.fail{background:var(--red)}
-.perms{display:flex;gap:5px;flex-wrap:wrap}
-.badge{padding:2px 7px;border-radius:4px;font-size:12px;line-height:1.45}
-.badge.ok{background:var(--ok-bg);color:var(--ok-text)}
-.badge.bad{background:var(--bad-bg);color:var(--bad-text);cursor:help}
-.badge.neutral{background:var(--bg);color:var(--muted)}
-.badge.count{background:var(--card);color:var(--muted);border-radius:999px;font-variant-numeric:tabular-nums}
+.perms{display:flex;gap:6px;flex-wrap:wrap}
+.badge{padding:3px 9px;border-radius:999px;font-size:12px;line-height:1.5;font-weight:500;border:1px solid transparent}
+.badge.ok{background:var(--ok-bg);color:var(--ok-text);border-color:color-mix(in srgb,var(--green) 30%,transparent)}
+.badge.bad{background:var(--bad-bg);color:var(--bad-text);cursor:help;border-color:color-mix(in srgb,var(--danger) 30%,transparent)}
+.badge.neutral{background:var(--bg);color:var(--muted);border-color:var(--line)}
+.badge.count{background:var(--card-2);color:var(--text-dim);border-radius:999px;font-variant-numeric:tabular-nums;border-color:var(--line)}
 .tb-spacer{flex:1 1 auto}
 .dirty{font-size:13px;color:var(--warning-text)}
 .tb-meta{font-size:13px;color:var(--muted)}
@@ -73,33 +87,40 @@ a{color:var(--blue)}
 @keyframes slide{0%{background-position:-40% 0}100%{background-position:140% 0}}
 
 /* ---------- tabs ---------- */
-.tabs{display:flex;gap:4px;padding:0 12px;border-top:1px solid var(--line);overflow-x:auto}
-.tab{position:relative;border:0;background:transparent;color:var(--muted);font-size:14px;font-weight:600;padding:11px 13px;cursor:pointer;white-space:nowrap;border-bottom:2px solid transparent}
-.tab:hover{color:var(--text)}
-.tab.active{color:var(--blue);border-bottom-color:var(--blue)}
+/* 分段胶囊（segmented pill）：去掉下划线式，改用圆角分段控件——选中项为实心卡片 + 内描边。
+   这是本轮最直观的可见变化之一；保留 .dotmini 角标与 .tab:focus-visible 内描边焦点环。 */
+.tabs{display:flex;gap:6px;padding:10px 24px;border-top:0;overflow-x:auto}
+.tab{position:relative;border:0;background:transparent;color:var(--muted);font-size:14px;font-weight:500;padding:9px 16px;border-radius:10px;cursor:pointer;white-space:nowrap;transition:background-color .15s ease,color .15s ease,box-shadow .15s ease}
+.tab:hover{color:var(--text);background:color-mix(in srgb,var(--card) 55%,transparent)}
+.tab.active{color:var(--text);background:var(--card);box-shadow:inset 0 0 0 1px var(--line)}
 .tab .dotmini{display:inline-block;width:6px;height:6px;border-radius:999px;background:var(--warning);margin-left:5px;vertical-align:middle}
 
 /* ---------- layout ---------- */
-.main{max-width:1400px;margin:0 auto;padding:var(--s4)}
-.grid{display:grid;grid-template-columns:1fr 380px;gap:var(--s4)}
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:var(--s4);align-items:stretch}
+/* 加大页边距与栅格列距（16→24px），并把右列固定为 420px：整体留白更从容、层次更清晰。 */
+.main{max-width:1440px;margin:0 auto;padding:24px}
+.grid{display:grid;grid-template-columns:minmax(0,1fr) 420px;gap:20px}
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;align-items:stretch}
 /* .col 用 flex 列布局 + 卡片 flex:1：让同一行两张卡片等高，
    消除「清理目录」比「CD2 连接」短一截时露出的豁口（不整齐问题）。 */
-.col{display:flex;flex-direction:column;gap:var(--s4)}
+.col{display:flex;flex-direction:column;gap:20px}
 .col>.card{flex:1 1 auto;display:flex;flex-direction:column}
 .col>.card>.panel{flex:1 1 auto}
 section.tabpane{display:none}
-/* 页内所有块统一 16px 间距：此前全宽卡片紧贴上一行（0 间距），与网格内 16px 不一致。 */
-section.tabpane.active{display:grid;gap:var(--s4);align-content:start}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-xl);padding:18px;box-shadow:var(--shadow-1);transition:box-shadow .15s ease,border-color .15s ease}
-.card:hover{box-shadow:var(--shadow-2);border-color:color-mix(in srgb,var(--blue) 38%,var(--line))}
-.card h2{font-size:16px;font-weight:600;color:var(--text-dim);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+/* 页内所有块统一 20px 间距：与网格列距保持一致，分布更均匀。 */
+section.tabpane.active{display:grid;gap:20px;align-content:start}
+/* 卡片层次感：20px 圆角 + 更深的 --shadow-2，顶部 1px 高光渐变描边（::before），
+   悬停时升到 --shadow-3 并轻微上浮——让卡片「浮起来」，与旧版扁平观感明显不同。 */
+.card{position:relative;overflow:hidden;background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:24px;box-shadow:var(--shadow-2);transition:box-shadow .18s ease,border-color .18s ease,transform .18s ease}
+.card::before{content:"";position:absolute;inset:0 0 auto 0;height:1px;background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--blue) 45%,transparent) 50%,transparent);opacity:.75;pointer-events:none}
+.card:hover{box-shadow:var(--shadow-3);border-color:color-mix(in srgb,var(--blue) 38%,var(--line));transform:translateY(-1px)}
+.card h2{font-size:17px;font-weight:700;color:var(--text);letter-spacing:-.01em;margin-bottom:16px;display:flex;align-items:center;gap:8px}
 .card h2 .spacer{flex:1}
 .card h2 .step{color:var(--muted);font-size:13px}
 .sub{color:var(--muted);font-size:13px;margin:-6px 0 12px}
 
 /* ---------- buttons ---------- */
-.btn{border:0;border-radius:var(--r-md);padding:9px 13px;font-size:14px;font-weight:600;cursor:pointer;transition:background-color .15s ease,box-shadow .15s ease,transform .1s ease,border-color .15s ease;display:inline-flex;align-items:center;gap:6px;line-height:1;box-shadow:var(--shadow-1)}
+/* 更大的圆角（12px）与内边距（10×16），配合悬停/按下微动效，触感更「实体」。 */
+.btn{border:0;border-radius:12px;padding:10px 16px;font-size:14px;font-weight:600;cursor:pointer;transition:background-color .15s ease,box-shadow .15s ease,transform .1s ease,border-color .15s ease;display:inline-flex;align-items:center;gap:6px;line-height:1;box-shadow:var(--shadow-1)}
 .btn:focus-visible{outline:2px solid var(--info);outline-offset:2px}
 .btn:disabled{opacity:.45;cursor:not-allowed}
 .btn:active:not(:disabled){transform:translateY(1px)}
@@ -107,7 +128,7 @@ section.tabpane.active{display:grid;gap:var(--s4);align-content:start}
 .btn-ok{background:var(--info-bg);color:#fff}.btn-ok:hover:not(:disabled){background:var(--info-hover)}
 .btn-danger{background:var(--danger-bg);color:#fff}.btn-danger:hover:not(:disabled){background:var(--danger-hover)}
 .btn-ghost{background:var(--bg);border:1px solid var(--line);color:var(--text)}.btn-ghost:hover:not(:disabled){background:var(--card)}
-.btn-sm{padding:5px 10px;font-size:13px}
+.btn-sm{padding:7px 12px;font-size:13px;border-radius:10px}
 .actions{display:flex;gap:var(--s2);flex-wrap:wrap;margin-top:var(--s3)}
 .spinner{width:14px;height:14px;border-radius:999px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;animation:spin .7s linear infinite;display:inline-block}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -115,7 +136,7 @@ section.tabpane.active{display:grid;gap:var(--s4);align-content:start}
 /* ---------- forms ---------- */
 .formgroup{margin-bottom:var(--s3)}
 .formgroup label{display:block;margin-bottom:5px;color:var(--muted);font-size:13px;font-weight:500}
-.formgroup input,.formgroup textarea,.formgroup select{width:100%;border:1px solid var(--line);background:var(--bg);color:var(--text);border-radius:var(--r-md);padding:9px 11px;outline:none;font-size:14px;transition:.15s;height:38px}
+.formgroup input,.formgroup textarea,.formgroup select{width:100%;border:1px solid var(--line);background:var(--bg);color:var(--text);border-radius:12px;padding:10px 13px;outline:none;font-size:14px;transition:.15s;height:42px}
 .formgroup textarea{height:auto;min-height:60px;resize:vertical}
 .formgroup input:hover:not(:focus),.formgroup textarea:hover:not(:focus),.formgroup select:hover:not(:focus){border-color:color-mix(in srgb,var(--blue) 40%,var(--line))}
 .formgroup input:focus,.formgroup textarea:focus,.formgroup select:focus{border-color:var(--blue);box-shadow:0 0 0 3px color-mix(in srgb,var(--blue) 22%,transparent)}
@@ -152,15 +173,16 @@ details.adv .adv-body{padding:0 12px 12px}
 .list-empty{padding:var(--s5) 12px;text-align:center;color:var(--muted)}
 .list-empty .ico{font-size:32px;display:block;margin-bottom:var(--s2)}
 .list-empty .t{color:var(--text-dim);font-size:15px}
-.taskitem{display:flex;align-items:center;gap:var(--s2);padding:9px 11px;border-bottom:1px solid var(--line-soft);font-size:14px}
+.taskitem{display:flex;align-items:center;gap:var(--s2);padding:12px 14px;border-bottom:1px solid var(--line-soft);font-size:14px;transition:background-color .12s ease}
+.taskitem:hover{background:var(--row-hover)}
 .taskitem:last-child{border-bottom:0}
 .taskitem .path{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-dim)}
 .mini{border:1px solid var(--line);background:var(--bg);color:var(--muted);border-radius:var(--r-sm);cursor:pointer;font-size:13px;padding:4px 8px;line-height:1}
 .mini:hover:not(:disabled){color:var(--text);background:var(--card)}
 .mini:disabled{opacity:.3;cursor:not-allowed}
 .mini.del:hover{color:var(--danger-text);border-color:var(--danger)}
-.diritem{display:flex;align-items:center;gap:var(--s2);padding:8px 10px;border-bottom:1px solid var(--line-soft);cursor:pointer}
-.diritem:hover{background:var(--card)}
+.diritem{display:flex;align-items:center;gap:var(--s2);padding:12px 14px;border-bottom:1px solid var(--line-soft);cursor:pointer;transition:background-color .12s ease}
+.diritem:hover{background:var(--row-hover)}
 .diritem:last-child{border-bottom:0}
 .diritem .name{flex:1;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .diritem .added{color:var(--success-text);font-size:13px}
@@ -173,15 +195,16 @@ details.adv .adv-body{padding:0 12px 12px}
 
 /* ---------- log toolbar / chips ---------- */
 .tblbar{display:flex;gap:var(--s2);flex-wrap:wrap;align-items:center;margin-bottom:var(--s2)}
-.tblbar input[type=text],.tblbar select{background:var(--bg);border:1px solid var(--line);color:var(--text);border-radius:var(--r-md);padding:7px 10px;font-size:13px;height:36px}
+.tblbar input[type=text],.tblbar select{background:var(--bg);border:1px solid var(--line);color:var(--text);border-radius:10px;padding:8px 12px;font-size:13px;height:40px}
 .tblbar input[type=text]{flex:1;min-width:140px}
 .chips{display:flex;gap:4px;flex-wrap:wrap}
 .chip{border:1px solid var(--line);background:var(--bg);color:var(--muted);border-radius:999px;font-size:12px;padding:4px 10px;cursor:pointer}
 .chip.active{background:var(--card);color:var(--text);border-color:var(--blue)}
 
 /* ---------- logs ---------- */
-.logbox{width:100%;height:clamp(280px,calc(100vh - 340px),1200px);overflow:auto;padding:12px;background:var(--log-bg);border-radius:var(--r-md);border:1px solid var(--line);font-size:13px;line-height:1.6;color:var(--muted);white-space:pre-wrap;font-family:var(--font-mono);font-variant-numeric:tabular-nums}
-.logline{display:block}
+.logbox{width:100%;height:clamp(280px,calc(100vh - 340px),1200px);overflow:auto;padding:16px;background:var(--log-bg);border-radius:14px;border:1px solid var(--line);font-size:13px;line-height:1.7;color:var(--muted);white-space:pre-wrap;font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.logline{display:block;padding:2px 6px;border-radius:6px}
+.logline:hover{background:var(--row-hover)}
 .logline .ts{color:var(--muted)}
 .logline .tx{color:var(--text-dim)}
 .logline.err .tx{color:var(--danger-text)}
@@ -213,7 +236,7 @@ details.adv .adv-body{padding:0 12px 12px}
 .modal-body{font-size:14px;color:var(--text-dim);line-height:1.7}
 .modal-list{margin:6px 0;padding-left:18px}
 .modal-list li{margin:2px 0}
-.modal-input{width:100%;margin-top:10px;background:var(--bg);border:1px solid var(--line);color:var(--text);border-radius:var(--r-md);padding:9px 11px;font-size:14px;height:38px}
+.modal-input{width:100%;margin-top:10px;background:var(--bg);border:1px solid var(--line);color:var(--text);border-radius:12px;padding:10px 13px;font-size:14px;height:42px}
 .modal-actions{display:flex;justify-content:flex-end;gap:var(--s2);margin-top:var(--s4)}
 .modal.wide{width:640px}
 .dirpick{max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:var(--r-md);background:var(--bg)}
