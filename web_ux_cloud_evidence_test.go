@@ -9,7 +9,7 @@ import (
 //  1. 右上角「下一步提示」整块移除（无 id="nextAction"、无 updateNextAction）；
 //  2. 「一切就绪…」与「建议：到②手动清理一次」文案不再出现；
 //  3. 清理规则选项框不再出现红框（无 class="check warn"）；
-//  4. 日志框改为随视口高度自适应（不再固定 max-height:420px）；
+//  4. 日志框改为「全高工作区」：卡片撑满内容区、日志区随高度伸缩（不再固定 max-height:420px / 写死 calc(100vh - 340px)）；
 //  5. 云端监听器 pushLive 改用与后端一致的时间窗判据（不再用粘性的累计 events）。
 func TestWebUX_HideReadyLineAndUnifyChecks(t *testing.T) {
 	mustNot := []string{
@@ -28,7 +28,9 @@ func TestWebUX_HideReadyLineAndUnifyChecks(t *testing.T) {
 	}
 
 	must := []string{
-		"height:clamp(280px,calc(100vh - 340px),1200px)",
+		// 结构性重构：日志页改为「全高工作区」——日志容器 flex 撑满内容区剩余高度（替代旧写死 calc(100vh - 340px)）。
+		"#tab-logs.tabpane.active{display:flex",
+		".logbox{width:100%;height:auto;min-height:320px",
 		// 前端 pushLive 与后端 pushEvidenceWindow 同口径的时间窗判据。
 		"parseTS(lastPush.lastMessageAt)",
 		"<=600000",

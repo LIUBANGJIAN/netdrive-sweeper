@@ -53,6 +53,15 @@ const pageHTML = `<!doctype html>
 --head-bg:rgba(255,255,255,.82);--mask:rgba(11,12,16,.42)}}
 *{box-sizing:border-box}
 body{margin:0;background:radial-gradient(1200px 560px at 50% -220px,var(--bg-glow),transparent 72%),var(--bg);font-family:var(--font-ui);color:var(--text);font-size:15px;min-height:100vh;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;line-height:1.55;transition:background-color .2s ease,color .2s ease}
+
+/* ---------- app shell（左侧栏控制台） ---------- */
+/* 结构性重构：外壳改为「左侧栏 + 右侧内容区」两栏控制台。仅搬动现有 DOM 节点 +
+   新增 .app/.side/.content 三个结构容器；未改任何 id/class/脚本/文案。 */
+.app{display:grid;grid-template-columns:264px minmax(0,1fr);min-height:100vh}
+.side{position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:18px;padding:20px 16px;background:var(--panel);border-right:1px solid var(--line)}
+.side-meta{margin-top:auto;display:flex;flex-direction:column;gap:8px;padding-top:16px;border-top:1px solid var(--line)}
+.side-meta .tb-meta{font-size:12px}
+.content{min-width:0;display:flex;flex-direction:column}
 h1,h2,h3{margin:0;letter-spacing:-.01em}
 a{color:var(--blue)}
 .mono{font-family:var(--font-mono)}
@@ -64,7 +73,6 @@ a{color:var(--blue)}
 .head{position:sticky;top:0;z-index:var(--z-header);background:var(--head-bg);-webkit-backdrop-filter:blur(16px) saturate(140%);backdrop-filter:blur(16px) saturate(140%);border-bottom:1px solid var(--line)}
 .topbar{padding:16px 24px;display:flex;flex-direction:column;gap:12px}
 .tb-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.tb-row + .tb-row{padding-top:11px;border-top:1px solid var(--line-soft)}
 .brand{display:flex;align-items:center;gap:9px}
 .brand svg{width:20px;height:20px;stroke:var(--blue)}
 .brand h1{font-size:20px;font-weight:800;letter-spacing:-.02em;color:var(--text)}
@@ -86,20 +94,20 @@ a{color:var(--blue)}
 .progress.on{background:linear-gradient(90deg,transparent 0,var(--blue) 40%,var(--green) 60%,transparent 100%);background-size:30% 100%;background-repeat:no-repeat;animation:slide 1.1s linear infinite}
 @keyframes slide{0%{background-position:-40% 0}100%{background-position:140% 0}}
 
-/* ---------- tabs ---------- */
-/* 分段胶囊（segmented pill）：去掉下划线式，改用圆角分段控件——选中项为实心卡片 + 内描边。
-   这是本轮最直观的可见变化之一；保留 .dotmini 角标与 .tab:focus-visible 内描边焦点环。 */
-.tabs{display:flex;gap:6px;padding:10px 24px;border-top:0;overflow-x:auto}
-.tab{position:relative;border:0;background:transparent;color:var(--muted);font-size:14px;font-weight:500;padding:9px 16px;border-radius:10px;cursor:pointer;white-space:nowrap;transition:background-color .15s ease,color .15s ease,box-shadow .15s ease}
+/* ---------- tabs（左侧栏垂直导航） ---------- */
+/* 由顶部水平下划线页签改为左侧栏垂直导航：整行可点、选中项 = 实心卡片 + 内描边 + 3px 左侧强调竖条。
+   保留 .dotmini 角标与 .tab:focus-visible 焦点环。 */
+.tabs{display:flex;flex-direction:column;gap:4px;padding:0;border-top:0;overflow:visible}
+.tab{position:relative;display:flex;align-items:center;justify-content:flex-start;text-align:left;width:100%;border:0;background:transparent;color:var(--muted);font-size:14px;font-weight:500;padding:10px 14px;border-radius:10px;cursor:pointer;white-space:nowrap;transition:background-color .15s ease,color .15s ease,box-shadow .15s ease}
 .tab:hover{color:var(--text);background:color-mix(in srgb,var(--card) 55%,transparent)}
-.tab.active{color:var(--text);background:var(--card);box-shadow:inset 0 0 0 1px var(--line)}
+.tab.active{color:var(--text);background:var(--card-2);box-shadow:inset 0 0 0 1px var(--line)}
+.tab.active::before{content:"";position:absolute;left:4px;top:50%;transform:translateY(-50%);width:3px;height:18px;border-radius:999px;background:var(--accent);pointer-events:none}
 .tab .dotmini{display:inline-block;width:6px;height:6px;border-radius:999px;background:var(--warning);margin-left:5px;vertical-align:middle}
 
 /* ---------- layout ---------- */
-/* 加大页边距与栅格列距（16→24px），并把右列固定为 420px：整体留白更从容、层次更清晰。 */
-.main{max-width:1440px;margin:0 auto;padding:24px}
-.grid{display:grid;grid-template-columns:minmax(0,1fr) 420px;gap:20px}
-.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;align-items:stretch}
+/* 主体位于左侧栏右侧；.main 竖向撑满内容区（供日志页做全高工作区）。.grid 已废弃删除（页面仅用 .grid2）。 */
+.main{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;width:100%;max-width:1400px;margin:0 auto;padding:20px 24px 24px}
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;align-items:stretch;align-content:start}
 /* .col 用 flex 列布局 + 卡片 flex:1：让同一行两张卡片等高，
    消除「清理目录」比「CD2 连接」短一截时露出的豁口（不整齐问题）。 */
 .col{display:flex;flex-direction:column;gap:20px}
@@ -108,6 +116,11 @@ a{color:var(--blue)}
 section.tabpane{display:none}
 /* 页内所有块统一 20px 间距：与网格列距保持一致，分布更均匀。 */
 section.tabpane.active{display:grid;gap:20px;align-content:start}
+/* 日志页：改为「全高工作区」——卡片撑满内容区剩余高度、日志区随高度伸缩（替代写死的 calc(100vh - 340px)）。
+   #tab-logs.tabpane.active 特异性 (1,2,0) > section.tabpane.active (0,2,1)，可安全覆盖。 */
+#tab-logs.tabpane.active{display:flex;flex-direction:column;flex:1 1 auto;min-height:0}
+#tab-logs.tabpane.active>.card{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+#tab-logs.tabpane.active .logbox{flex:1 1 auto}
 /* 卡片层次感：20px 圆角 + 更深的 --shadow-2，顶部 1px 高光渐变描边（::before），
    悬停时升到 --shadow-3 并轻微上浮——让卡片「浮起来」，与旧版扁平观感明显不同。 */
 .card{position:relative;overflow:hidden;background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:24px;box-shadow:var(--shadow-2);transition:box-shadow .18s ease,border-color .18s ease,transform .18s ease}
@@ -202,7 +215,7 @@ details.adv .adv-body{padding:0 12px 12px}
 .chip.active{background:var(--card);color:var(--text);border-color:var(--blue)}
 
 /* ---------- logs ---------- */
-.logbox{width:100%;height:clamp(280px,calc(100vh - 340px),1200px);overflow:auto;padding:16px;background:var(--log-bg);border-radius:14px;border:1px solid var(--line);font-size:13px;line-height:1.7;color:var(--muted);white-space:pre-wrap;font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.logbox{width:100%;height:auto;min-height:320px;overflow:auto;padding:16px;background:var(--log-bg);border-radius:14px;border:1px solid var(--line);font-size:13px;line-height:1.7;color:var(--muted);white-space:pre-wrap;font-family:var(--font-mono);font-variant-numeric:tabular-nums}
 .logline{display:block;padding:2px 6px;border-radius:6px}
 .logline:hover{background:var(--row-hover)}
 .logline .ts{color:var(--muted)}
@@ -245,8 +258,8 @@ details.adv .adv-body{padding:0 12px 12px}
 /* ---------- focus visibility (keyboard) ---------- */
 /* 键盘 Tab 走查的可见焦点环：统一用 --blue 描边 + color-mix 微光晕，暗/亮底上均清晰。
    仅补此前缺失的元素；已达标的 .btn:focus-visible 与 .formgroup input:focus 保持原样。
-   .tab 与 details>summary 用内描边（负偏移）：既避免被 .tabs 的 overflow 裁掉，也不压掉页签选中下划线。 */
-.tab:focus-visible{outline:2px solid var(--blue);outline-offset:-2px}
+   .tab 现位于左侧栏、无 overflow 裁剪，改用外描边 (+2px) 更清晰；details>summary 仍用内描边。 */
+.tab:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 details.adv > summary:focus-visible{outline:2px solid var(--blue);outline-offset:-2px}
 #logSearch:focus-visible,.tblbar input[type=text]:focus-visible,.tblbar select:focus-visible,
 .chip:focus-visible,.mini:focus-visible,.backlatest:focus-visible,
@@ -254,7 +267,15 @@ details.adv > summary:focus-visible{outline:2px solid var(--blue);outline-offset
 .modal-input:focus-visible{outline:2px solid var(--blue);outline-offset:2px;box-shadow:0 0 0 3px color-mix(in srgb,var(--blue) 28%,transparent)}
 
 /* ---------- responsive ---------- */
-@media(max-width:1199px){.grid,.grid2{grid-template-columns:1fr}}
+@media(max-width:1199px){.grid2{grid-template-columns:1fr}}
+/* 左侧栏在小屏折叠为顶部横向条；主体占满整宽，避免横向滚动。 */
+@media(max-width:900px){
+ .app{grid-template-columns:1fr}
+ .side{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line);padding:12px}
+ .tabs{flex-direction:row;overflow-x:auto}
+ .tab{width:auto}
+ .side-meta{display:none}
+}
 @media(max-width:767px){
  .main{padding:12px}.topbar{padding:8px 12px}
  .row2,.row3{grid-template-columns:1fr}
@@ -273,32 +294,35 @@ details.adv > summary:focus-visible{outline:2px solid var(--blue);outline-offset
 </style>
 </head>
 <body>
-<div class="head">
-  <div class="topbar">
-    <div class="tb-row">
-      <div class="brand">
-        <svg viewBox="0 0 24 24" fill="none" stroke="#58a6ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/></svg>
-        <h1>NetDrive Sweeper</h1>
-      </div>
-      <div class="conn"><span class="dot" id="connDot"></span><span id="connText"><span class="skel"></span></span></div>
-      <div class="perms" id="permBadges"><span class="badge neutral">权限未读取</span></div>
-      <div class="tb-spacer"></div>
-      <span class="dirty hidden" id="dirtyFlag">● 有未保存的修改</span>
+<div class="app">
+  <aside class="side">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#58a6ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/></svg>
+      <h1>NetDrive Sweeper</h1>
     </div>
-    <div class="tb-row">
+    <nav class="tabs" id="tabs">
+      <button class="tab" data-tab="config">① 连接 · 目录 · 规则<span class="dotmini hidden" id="tabRulesDot"></span><span class="badge count hidden" id="tabConnCount"></span></button>
+      <button class="tab active" data-tab="logs">② 运行日志</button>
+    </nav>
+    <div class="side-meta">
       <span class="tb-meta">Token 根目录: <span id="tokenRoot">-</span></span>
       <span class="tb-meta" id="runState">空闲</span>
       <span class="tb-meta" id="lastRunMeta">-</span>
       <span class="tb-meta">事件驱动: <span class="pushtag" id="pushState">-</span></span>
-      <div class="tb-spacer"></div>
     </div>
-    <div class="progress" id="progress"></div>
-  </div>
-  <nav class="tabs" id="tabs">
-    <button class="tab" data-tab="config">① 连接 · 目录 · 规则<span class="dotmini hidden" id="tabRulesDot"></span><span class="badge count hidden" id="tabConnCount"></span></button>
-    <button class="tab active" data-tab="logs">② 运行日志</button>
-  </nav>
-</div>
+  </aside>
+  <div class="content">
+    <header class="head">
+      <div class="topbar">
+        <div class="tb-row">
+          <div class="conn"><span class="dot" id="connDot"></span><span id="connText"><span class="skel"></span></span></div>
+          <div class="perms" id="permBadges"><span class="badge neutral">权限未读取</span></div>
+          <div class="tb-spacer"></div>
+          <span class="dirty hidden" id="dirtyFlag">● 有未保存的修改</span>
+        </div>
+        <div class="progress" id="progress"></div>
+      </div>
+    </header>
 
 <main class="main">
   <!-- ① 连接 · 目录 · 规则（合并原「连接与目录」「清理规则」两页） -->
@@ -390,6 +414,8 @@ details.adv > summary:focus-visible{outline:2px solid var(--blue);outline-offset
     </div>
   </section>
 </main>
+  </div>
+</div>
 
 <div id="modalRoot"></div>
 <div id="toastRoot"></div>
