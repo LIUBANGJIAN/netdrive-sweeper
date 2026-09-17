@@ -453,6 +453,74 @@ func pushHasLiveEvidence() bool {
 	return time.Since(t) <= pushEvidenceWindow
 }
 
+// lastFileEventT 读取最近一次 FILE_SYSTEM_CHANGE 的时刻（零值表示本进程尚未收到过）。
+// 供事件静默兜底判定使用，与 pushHasLiveEvidence 共用同一证据来源。
+func lastFileEventT() time.Time {
+	s := pushSnapshot()
+	if s.LastFileEventAt == "" {
+		return time.Time{}
+	}
+	t, err := time.ParseInLocation("2006-01-02 15:04:05", s.LastFileEventAt, time.Local)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+// fallbackScanDue 判定「事件静默兜底扫描」此刻是否应当执行（纯函数，便于表驱动单测）。
+// 规则：
+//   - interval<=0：关闭兜底；
+//   - 静默起点 = 最近一次文件事件时刻；本进程尚未收到过则从 start（订阅建立时刻）起算；
+//   - 距上次兜底扫描不足 interval 时跳过——持续静默时以 interval 为最小间隔重复兜底，
+//     而不是每分钟都扫。
+func fallbackScanDue(now, lastFileEvent, lastFallback, start time.Time, interval time.Duration) bool {
+	if interval <= 0 {
+		return false
+	}
+	if lastFileEvent.IsZero() {
+		lastFileEvent = start
+	}
+	if now.Sub(lastFileEvent) < interval {
+		return false
+	}
+	if !lastFallback.IsZero() && now.Sub(lastFallback) < interval {
+		return false
+	}
+	return true
+}
+
+// runEventFallbackScanner 是「事件静默兜底扫描」循环：事件驱动订阅运行期间，若连续 interval
+// 未收到任何 FILE_SYSTEM_CHANGE（典型原因：CD2 云端原生事件监听器未运行，文件事件断流），
+// 自动执行一次扫描。每分钟检查一次；触发走与事件驱动相同的 trigger（自带扫描互斥与 panic 兜底）。
+// 背景：旧版（F1 范围过滤之前）任何 FSC 事件都会触发扫描，CD2 自身操作的涓流事件意外充当了
+// 高频兜底；F1 精确化后，云端监听器未运行的实例会完全静默——本循环把兜底显式化且可控。
+// ctx 取消（配置热重启/停机）时退出，由调用方随新订阅世代重新拉起。
+func runEventFallbackScanner(ctx context.Context, interval time.Duration, trigger func(), logf func(format string, args ...any)) {
+	if interval <= 0 || trigger == nil {
+		return
+	}
+	start := time.Now()
+	var lastFallback time.Time
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		now := time.Now()
+		if !fallbackScanDue(now, lastFileEventT(), lastFallback, start, interval) {
+			continue
+		}
+		lastFallback = now
+		if logf != nil {
+			logf("事件静默已超过 %s（未收到任何文件变更事件，CD2 云端监听器可能未运行），执行兜底扫描", interval)
+		}
+		trigger()
+	}
+}
+
 // setPushState 更新推送运行时状态（自持锁）。注意：不要在本函数内再取 pushMu 之外的锁后回调，
 // 也不要在持有 pushMu 时调用（否则死锁），持有锁时用 setPushStateLocked。
 func setPushState(state, detail string) {
@@ -877,7 +945,7 @@ func runPushConsumer(ctx context.Context, c Config, gen int64, done chan struct{
 		setStatus("已连接: "+token.RootDir, token)
 		// 先声明后赋值：让 trigger 闭包能引用 p 本身，从而在扫描互斥时 rearm 重试。
 		var p *pushConsumer
-		p = newPushConsumer(client, debounce, func() {
+		triggerFn := func() {
 			// 扫描期间的 panic 不得把订阅 goroutine 一起带走：单独兜底（D4）。
 			defer func() {
 				if r := recover(); r != nil {
@@ -899,10 +967,14 @@ func runPushConsumer(ctx context.Context, c Config, gen int64, done chan struct{
 				return
 			}
 			appendLog("事件触发扫描完成 checked=%d matched=%d deleted=%d", res.Checked, res.Matched, res.Deleted)
-		})
+		}
+		p = newPushConsumer(client, debounce, triggerFn)
 		p.gen = gen
 		// F2：两次事件驱动扫描之间的最小间隔。0 = 关闭冷却（旧行为）。
 		p.minInterval = time.Duration(c.EventScanMinIntervalMinutes) * time.Minute
+		// 事件静默兜底：文件事件断流（如 CD2 云端监听器未运行）时按配置间隔自动扫描。
+		// 这恢复了旧版「任何事件都触发扫描」的意外兜底能力，且不引入扫描风暴。
+		go runEventFallbackScanner(ctx, time.Duration(c.EventFallbackScanMinutes)*time.Minute, triggerFn, appendLog)
 		setPushStateIfGen("running", fmt.Sprintf("运行中（PushMessage 已订阅，防抖 %ds）", c.PushDebounceSeconds), gen)
 		appendLog("事件驱动实时清理已启动（PushMessage，防抖 %ds，地址=%s）", c.PushDebounceSeconds, normalizeAddress(c.Address))
 		p.run(ctx) // 常驻订阅；内部自带重连退避，ctx 取消时返回
@@ -1115,7 +1187,7 @@ func cloudListenerReport(apis []CloudAPI, pushLive bool) (lines []string, key st
 			continue
 		}
 		lines = append(lines, fmt.Sprintf(
-			"警示：CD2 云盘「%s」的云端原生事件监听器未运行（isCloudEventListenerRunning=false），且最近未收到任何文件变更事件（FILE_SYSTEM_CHANGE）——此状态下文件变更可能不会被推送到，事件驱动清理可能失效。请到 CD2 检查该云盘连接/重新登录，或重启 CD2 后在页面点「保存配置」重订阅；期间请用「手动清理」兜底。",
+			"警示：CD2 云盘「%s」的云端原生事件监听器未运行（isCloudEventListenerRunning=false），且最近未收到任何文件变更事件（FILE_SYSTEM_CHANGE）——此状态下文件变更可能不会被推送到，事件驱动清理可能失效。请到 CD2 检查该云盘连接/重新登录，或重启 CD2 后在页面点「保存配置」重订阅；本程序将按「事件静默兜底扫描」设置自动兜底（默认每 15 分钟一次，可在页面调整），期间也可用「手动清理」立即处理。",
 			a.Name))
 	}
 	parts = append(parts, fmt.Sprintf("pushLive=%v", pushLive))

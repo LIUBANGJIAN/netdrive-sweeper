@@ -513,6 +513,13 @@ func TestQA5_NoPeriodicTickerInProduction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读取目录失败: %v", err)
 	}
+	// 唯一豁免（2026-09-18 修订）：runEventFallbackScanner（事件静默兜底扫描）允许使用
+	// 1 分钟检查 ticker。它不是「每 N 秒扫全树」的轮询：仅当文件变更事件断流
+	// （fallbackScanDue 判定静默超过用户配置的间隔，默认 15 分钟）时才经 trigger 执行
+	// 一次扫描——线上实证：CD2 云端监听器未运行时事件完全断流，纯事件驱动会静默失效，
+	// 旧版「任何事件都触发扫描」恰好充当了兜底。此豁免把兜底显式化并受风守约束：
+	// 函数体必须保留 fallbackScanDue 静默判定门与 ctx.Done 热退出，不得退化为无条件轮询。
+	const fallbackFuncName = "func runEventFallbackScanner("
 	checked := 0
 	for _, e := range entries {
 		name := e.Name()
@@ -525,9 +532,26 @@ func TestQA5_NoPeriodicTickerInProduction(t *testing.T) {
 			t.Fatalf("读取 %s 失败: %v", name, err)
 		}
 		s := string(b)
-		for _, bad := range []string{"time.NewTicker(", "time.Tick("} {
-			if strings.Contains(s, bad) {
-				t.Fatalf("生产文件 %s 含周期性 ticker %q（触碰「禁止每 N 秒遍历」风控红线）", name, bad)
+		if strings.Contains(s, "time.Tick(") {
+			t.Fatalf("生产文件 %s 含周期性 ticker %q（触碰「禁止每 N 秒遍历」风控红线）", name, "time.Tick(")
+		}
+		if strings.Contains(s, "time.NewTicker(") {
+			if name != "main.go" {
+				t.Fatalf("生产文件 %s 含 time.NewTicker(（仅 main.go 的 runEventFallbackScanner 允许）", name)
+			}
+			fb := extractGoFunc(t, mustReadGoFile(t, "main.go"), fallbackFuncName)
+			if fb == "" || !strings.Contains(fb, "time.NewTicker(") {
+				t.Fatalf("main.go 含 time.NewTicker( 但未找到兜底扫描函数 %q", fallbackFuncName)
+			}
+			// 兜底安全要素：静默判定门 + 热退出。缺失即视为退化为无条件轮询，红线仍生效。
+			for _, must := range []string{"fallbackScanDue(", "ctx.Done()"} {
+				if !strings.Contains(fb, must) {
+					t.Fatalf("runEventFallbackScanner 缺少兜底安全要素 %q（不得退化为无条件轮询）", must)
+				}
+			}
+			rest := strings.Replace(s, fb, "", 1)
+			if strings.Contains(rest, "time.NewTicker(") {
+				t.Fatal("main.go 在 runEventFallbackScanner 之外含 time.NewTicker(（触碰风控红线）")
 			}
 		}
 	}

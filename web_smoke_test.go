@@ -24,6 +24,7 @@ func TestHandleIndex_RendersPage(t *testing.T) {
 		`id="pushState"`,
 		`id="pushHint"`,
 		`id="eventScanMinInterval"`, // F2 扫描冷却的 UI 输入（存量用户可调；见 config 迁移 v1→v2）
+		`id="eventFallbackScan"`,    // 事件静默兜底扫描的 UI 输入（见 config 迁移 v2→v3）
 		`id="lastRunMeta"`,
 		`id="logsBox"`,
 		`data-tab="config"`,

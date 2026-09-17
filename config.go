@@ -33,13 +33,20 @@ type Config struct {
 	// EventScanMinIntervalMinutes 是两次「事件驱动」扫描之间的最小间隔（分钟）。0 = 关闭冷却（旧行为）。
 	// 背景：CD2 的 PushMessage 是全局流——别的应用/系统/CD2 自身的变更都会推给我们；稳定的涓流
 	// 事件会让防抖每几秒就触发一次全目录扫描。此间隔给事件驱动扫描设下限，保护网盘 API 不被刷爆。
-	EventScanMinIntervalMinutes int      `json:"event_scan_min_interval_minutes"`
+	EventScanMinIntervalMinutes int `json:"event_scan_min_interval_minutes"`
+	// EventFallbackScanMinutes 是「事件静默兜底扫描」的间隔（分钟）。0 = 关闭兜底。
+	// 背景：事件驱动清理依赖 CD2 的推送通道；当 CD2 云端原生事件监听器未运行
+	// （isCloudEventListenerRunning=false）或文件变更事件断流时，清理范围内的事件永远不会
+	// 到来，扫描将无限期静默——旧版「任何 FSC 事件都触发扫描」的行为恰好意外充当了兜底。
+	// 此配置把兜底显式化：事件驱动运行中，若连续 N 分钟未收到任何 FILE_SYSTEM_CHANGE，
+	// 自动执行一次扫描（持续静默时以 N 为最小间隔重复，不会刷爆网盘 API）。
+	EventFallbackScanMinutes    int      `json:"event_fallback_scan_minutes"`
 	IncompleteSuffixes          string   `json:"incomplete_suffixes"`
 	Tasks                       []string `json:"tasks"`
 }
 
 // currentConfigVersion 是当前配置结构版本。新增需要迁移的语义变更时 +1，并在 migrateConfig 里补一段。
-const currentConfigVersion = 2
+const currentConfigVersion = 3
 
 // migrateConfig 对历史配置做一次性、幂等的迁移（由 ConfigVersion 控制）。
 // 每一步仅对「尚未经历该步」的旧版本生效（按来源版本判定），因此对任意版本都幂等，
@@ -64,6 +71,14 @@ func migrateConfig(c Config) Config {
 	if c.ConfigVersion < 2 {
 		c.EventScanMinIntervalMinutes = 5
 		appendLog("配置迁移 v1→v2：事件扫描最小间隔设为默认 5 分钟（可在页面「事件扫描最小间隔（分钟）」调整；填 0 关闭冷却）")
+	}
+	// v2→v3：新增 event_fallback_scan_minutes（事件静默兜底扫描）。
+	// 旧配置不含该字段，反序列化得 0（=关闭兜底），升级后兜底将形同不存在；
+	// 故对 v<3 一律置为新默认 15 分钟。0 是「关闭兜底」的合法用户意图，
+	// 仅在 v3+ 配置下生效——normalizeConfig 不得把 0 改成 15。
+	if c.ConfigVersion < 3 {
+		c.EventFallbackScanMinutes = 15
+		appendLog("配置迁移 v2→v3：事件静默兜底扫描设为默认 15 分钟（可在页面「事件静默兜底扫描（分钟）」调整；填 0 关闭兜底）")
 	}
 	c.ConfigVersion = currentConfigVersion
 	return c
@@ -90,6 +105,7 @@ func defaultConfig() Config {
 		EnablePush:                  true,
 		PushDebounceSeconds:         5,
 		EventScanMinIntervalMinutes: 5, // 事件驱动扫描最小间隔（分钟）：防止无关事件把扫描刷成几秒一次
+		EventFallbackScanMinutes:    15, // 事件静默兜底扫描（分钟）：文件事件断流时自动扫描，覆盖云端监听器未运行
 		IncompleteSuffixes:          ".part,.download,.!qB,.bc!,.aria2,.crdownload,.td,.tmp,.!ut",
 		// Tasks 默认为空：空目录 = 不扫描任何目录（T7 裁决）。
 		// 仅影响「新装 / 重置」的默认值；已有配置维持原值（本次不迁移历史数据）。
@@ -122,6 +138,8 @@ func normalizeConfig(c Config) Config {
 	c.PushDebounceSeconds = clampInt(c.PushDebounceSeconds, 1, 120, 5)
 	// 事件驱动扫描最小间隔：0 = 关闭冷却；非法值回退默认 5 分钟。
 	c.EventScanMinIntervalMinutes = clampInt(c.EventScanMinIntervalMinutes, 0, 1440, 5)
+	// 事件静默兜底扫描：0 = 关闭兜底；非法值回退默认 15 分钟。
+	c.EventFallbackScanMinutes = clampInt(c.EventFallbackScanMinutes, 0, 1440, 15)
 	// 防呆：未完成后缀被清空会静默废掉「含未完成后缀则整目录跳过」这道保险丝（P0-23）。
 	if strings.TrimSpace(c.IncompleteSuffixes) == "" {
 		c.IncompleteSuffixes = defaultConfig().IncompleteSuffixes
