@@ -22,6 +22,12 @@ service CloudDriveFileSrv {
   // 监听器」是否运行；为 false 并不必然意味着 PushMessage 停止投递（CD2 仍可能通过自身变更
   // 检测投递，实证：该标记为 false 时程序仍持续收到 changeType=1/2 事件）。对齐指南 3721-3747。
   rpc GetAllCloudApis(google.protobuf.Empty) returns (CloudAPIList) {}
+  // GetRuntimeInfo 返回服务器运行时信息（含版本），仅用于诊断「事件驱动失效」时判断
+  // CD2 版本是否过旧（官方指南 4798-4813，字段号对齐：productName=1/productVersion=2）。
+  rpc GetRuntimeInfo(google.protobuf.Empty) returns (RuntimeInfo) {}
+  // GetServiceCapabilities 查询服务是否支持重启/更新（指南 7536-7550），
+  // 用于诊断「云端事件监听器未运行」时判断能否用 RestartService 远程重启 CD2 恢复监听器。
+  rpc GetServiceCapabilities(google.protobuf.Empty) returns (ServiceCapabilities) {}
 }
 
 enum OfflineStatus {
@@ -158,4 +164,18 @@ message CloudAPI {
   optional string path = 10;
   bool supportHttpDownload = 11;
   bool readOnly = 12;
+}
+
+// RuntimeInfo 对齐官方 GetRuntimeInfo 响应（指南 4806-4811）。
+message RuntimeInfo {
+  string productName = 1;
+  string productVersion = 2;
+  string cloudAPIVersion = 3;
+  string osInfo = 4;
+}
+
+// ServiceCapabilities 对齐官方 GetServiceCapabilities 响应（指南 7544-7547）。
+message ServiceCapabilities {
+  bool canRestart = 1;
+  bool canUpdate = 2;
 }
