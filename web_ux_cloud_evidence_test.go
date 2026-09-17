@@ -20,6 +20,9 @@ func TestWebUX_HideReadyLineAndUnifyChecks(t *testing.T) {
 		`class="check warn"`,
 		"max-height:420px",
 		"(lastPush.events||0)>0",
+		// 正常态（pushLive=true）的同义横幅已删除：不再逐盘声称「已确证仍能收到文件变更事件」
+		// （pushLive 是全局信号，不支持逐盘断言；且该行只在一切正常时出现，属噪音）。
+		"未上报云端事件通道，但本程序已确证",
 	}
 	for _, bad := range mustNot {
 		if strings.Contains(pageHTML, bad) {

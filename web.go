@@ -610,8 +610,6 @@ function renderPush(p){
     var down=lastStatus.cloudApis.filter(function(a){return a.isCloudEventListenerRunning===false});
     if(down.length&&!pushLive){
       html+='<div class="banner banner-info">提示：CD2 云盘「'+down.map(function(a){return esc(a.name)}).join('、')+'」未上报云端事件通道，且最近未收到任何文件变更事件。这是部分 CD2 版本的常态、并非故障；实时清理由「离线任务监控」与「事件静默兜底扫描」自动接替，也可用「手动清理」立即处理。</div>';
-    }else if(down.length&&pushLive){
-      html+='<div class="banner banner-info">CD2 云盘「'+down.map(function(a){return esc(a.name)}).join('、')+'」未上报云端事件通道，但本程序已确证仍能收到文件变更事件（FILE_SYSTEM_CHANGE），实时清理不受影响。</div>';
     }
   }
   // 离线任务监控状态：直接回答「它到底有没有在跑」。此前该项在界面上毫无可观测性，

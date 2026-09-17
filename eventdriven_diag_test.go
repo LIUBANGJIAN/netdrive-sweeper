@@ -6,8 +6,8 @@ package main
 //	    都不 panic 且安全降级；
 //	(b) pushSupervisor 的「未启动原因」变化时才记日志、且不重复刷屏，Token 明文绝不进日志；
 //	(c) 重连退避序列单调不减且封顶，抖动有界；
-//	(d) GetAllCloudApis 解析在 isCloudEventListenerRunning=false 时按证据分级提示：有证据→
-//	    「提示：…已确证仍能收到该云盘的推送消息…」；无证据→去掉绝对化断言的提示（两者都不再是「警告」）。
+//	(d) GetAllCloudApis 解析在 isCloudEventListenerRunning=false 时的日志分级：有文件事件证据（pushLive）→
+//	    不产日志（正常态噪音已按用户诉求静默）；无证据→产 1 行合并提示（多盘用「、」分隔，不再逐盘刷行）。
 // 另附 P1「订阅存活可见性」的最小证据（任意类型推送计数 + 最近路径）。
 // 所有断言只依赖纯函数/内存结构，不依赖真实 CD2 连接。
 
@@ -403,10 +403,12 @@ func TestDiag_ReconnectJitterBounded(t *testing.T) {
 
 // ==================== (d) GetAllCloudApis 解析 + 仅变化时记一次 ====================
 
-// d1: cloudListenerReport——isCloudEventListenerRunning=false 的文案按「是否仍能收到文件变更事件」分级：
-// 无文件事件证据时产出中性「提示」（如实说明暂未收到文件变更事件，并指明已由「离线任务监控」+
-// 「事件静默兜底扫描」自动接替，给出「手动清理」兜底入口；不再误称「无需处理」）；
-// 有证据（最近收到 FILE_SYSTEM_CHANGE）时产出「已确证仍能收到文件变更事件」的提示，避免误报。
+// d1: cloudListenerReport——isCloudEventListenerRunning=false 的日志按「是否仍能收到文件变更事件」分级：
+// 无文件事件证据（!pushLive）时产出恰好 1 行中性「提示」（如实说明暂未收到文件变更事件，并指明已由
+// 「离线任务监控」+「事件静默兜底扫描」自动接替，给出「手动清理」兜底入口；不再误称「无需处理」）；
+// 有证据（pushLive，最近收到 FILE_SYSTEM_CHANGE）时不产任何日志——正常态、无信息量，且 pushLive 是
+// 「任一云盘来事件即置真」的全局信号，不足以逐盘断言「该云盘仍能收到事件」（用户反馈不想看到该提示，
+// 2026-09-19 静默化）；key 仍随证据位变化，仅用于调用方节流。
 // 2026-09-17 更正：证据必须是 FILE_SYSTEM_CHANGE——LOG_MESSAGE=7 是 CD2 自身日志广播，
 // 与文件事件通道是否存活无关（线上曾据此误判「订阅存活，无需处理」）。
 // 2026-09-18 文案更正：isCloudEventListenerRunning=false 是部分 CD2 版本的常态、并非可修复故障，
@@ -439,16 +441,63 @@ func TestDiag_CloudListenerReport_GradedByEvidence(t *testing.T) {
 		t.Fatalf("key 应为 115=false;pushLive=false，实际 %q", key)
 	}
 
-	// pushLive=true：降级为「已确证仍能收到文件变更事件」的提示。
+	// pushLive=true：正常态，不再产任何日志（用户诉求：不想看到该提示）。
 	linesLive, keyLive := cloudListenerReport([]CloudAPI{{Name: "115", IsCloudEventListenerRunning: false}}, true)
-	if len(linesLive) != 1 || !strings.Contains(linesLive[0], "已确证仍能收到") {
-		t.Fatalf("pushLive=true 应产「已确证仍能收到」提示，实际 %v", linesLive)
-	}
-	if !strings.Contains(linesLive[0], "FILE_SYSTEM_CHANGE") {
-		t.Fatalf("pushLive=true 的证据口径必须是 FILE_SYSTEM_CHANGE，实际 %v", linesLive)
+	if len(linesLive) != 0 {
+		t.Fatalf("pushLive=true 应静默（不产日志），实际 %v", linesLive)
 	}
 	if !strings.Contains(keyLive, "pushLive=true") {
-		t.Fatalf("key 应含 pushLive=true，实际 %q", keyLive)
+		t.Fatalf("key 应含 pushLive=true（供节流），实际 %q", keyLive)
+	}
+	for _, ln := range linesLive {
+		if strings.Contains(ln, "未上报云端事件通道") {
+			t.Fatalf("pushLive=true 不得再产「未上报云端事件通道」行，实际 %q", ln)
+		}
+	}
+}
+
+// d1b: cloudListenerReport——多盘未上报时合并为恰好 1 行（避免逐盘刷屏），且 pushLive 时静默。
+func TestDiag_CloudListenerReport_ConsolidatesUnreportedDrives(t *testing.T) {
+	drives := []CloudAPI{
+		{Name: "123云盘", IsCloudEventListenerRunning: false},
+		{Name: "115open", IsCloudEventListenerRunning: false},
+		{Name: "OneDrive", IsCloudEventListenerRunning: false},
+		{Name: "阿里云盘Open", IsCloudEventListenerRunning: false},
+	}
+
+	// 全部未上报 + 无证据：恰好 1 行，包含全部盘名并用「、」分隔。
+	lines, _ := cloudListenerReport(drives, false)
+	if len(lines) != 1 {
+		t.Fatalf("4 盘未上报 + !pushLive 应合并为 1 行，实际 %d 行：%v", len(lines), lines)
+	}
+	for _, name := range []string{"123云盘", "115open", "OneDrive", "阿里云盘Open"} {
+		if !strings.Contains(lines[0], name) {
+			t.Fatalf("合并行应包含云盘名 %q，实际 %q", name, lines[0])
+		}
+	}
+	if !strings.Contains(lines[0], "、") {
+		t.Fatalf("多盘应以「、」分隔，实际 %q", lines[0])
+	}
+
+	// 全部未上报 + 有证据：静默（不产日志）。
+	linesLive, _ := cloudListenerReport(drives, true)
+	if len(linesLive) != 0 {
+		t.Fatalf("4 盘未上报 + pushLive 应静默，实际 %v", linesLive)
+	}
+
+	// 混合：未上报盘合并提示行在前，已就绪盘各自一行在后。
+	mixed, _ := cloudListenerReport([]CloudAPI{
+		{Name: "115", IsCloudEventListenerRunning: false},
+		{Name: "aliyun", IsCloudEventListenerRunning: true},
+	}, false)
+	if len(mixed) != 2 {
+		t.Fatalf("混合场景应产 2 行，实际 %d：%v", len(mixed), mixed)
+	}
+	if !strings.Contains(mixed[0], "115") || !strings.Contains(mixed[0], "未上报云端事件通道") {
+		t.Fatalf("第 1 行应为含 115 的「未上报云端事件通道」提示，实际 %q", mixed[0])
+	}
+	if !strings.Contains(mixed[1], "aliyun") || !strings.Contains(mixed[1], "已就绪") {
+		t.Fatalf("第 2 行应为 aliyun 的「已就绪」提示，实际 %q", mixed[1])
 	}
 }
 

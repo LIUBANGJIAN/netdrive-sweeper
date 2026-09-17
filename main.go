@@ -22,7 +22,7 @@ const appName = "NetDrive Sweeper"
 // appVersion 是产品语义化版本号，显示在页面左上角标题旁，便于用户区分部署的版本。
 // 构建时可用 -ldflags "-X main.appVersion=x.y.z" 覆盖（Dockerfile / CI 均从仓库根的 VERSION
 // 文件注入）；未覆盖时回落到下面的默认值。修改版本号时请同时更新 VERSION 文件。
-var appVersion = "1.1.0"
+var appVersion = "1.1.1"
 
 // versionLabel 是用于展示的完整版本串：v<版本号>，并在构建信息可得时附上 VCS 修订短 SHA
 // （形如 v1.0.0 (a1b2c3d)，工作区有未提交改动时带 -dirty）。进程启动时计算一次，
@@ -1199,14 +1199,14 @@ func offlineCompleted(oldStatus, newStatus string) bool {
 // 目的：回答用户最关心的问题——「离线监控到底有没有在跑？」此前该项在界面上毫无可观测性，
 // 用户只能看到「没有日志」，无从判断它是「没生效」还是「在跑但恰好没有离线任务完成」。
 type OfflineMonitorRuntime struct {
-	Enabled         bool     `json:"enabled"`                   // 是否启用（间隔 > 0 且有清理目录）
-	IntervalMinutes int      `json:"intervalMinutes"`           // 当前检查间隔（分钟）；0=关闭
-	Since           string   `json:"since,omitempty"`           // 进入当前启用/关闭状态的时间
-	LastCheckAt     string   `json:"lastCheckAt,omitempty"`     // 最近一轮状态查询的时间
-	LastTriggerAt   string   `json:"lastTriggerAt,omitempty"`   // 最近一次因「离线完成」触发扫描的时间
-	Triggers        int      `json:"triggers"`                  // 累计触发扫描次数
-	Watching        []string `json:"watching,omitempty"`        // 最近一轮处于「下载中」的清理目录
-	Note            string   `json:"note,omitempty"`            // 人类可读说明
+	Enabled         bool     `json:"enabled"`                 // 是否启用（间隔 > 0 且有清理目录）
+	IntervalMinutes int      `json:"intervalMinutes"`         // 当前检查间隔（分钟）；0=关闭
+	Since           string   `json:"since,omitempty"`         // 进入当前启用/关闭状态的时间
+	LastCheckAt     string   `json:"lastCheckAt,omitempty"`   // 最近一轮状态查询的时间
+	LastTriggerAt   string   `json:"lastTriggerAt,omitempty"` // 最近一次因「离线完成」触发扫描的时间
+	Triggers        int      `json:"triggers"`                // 累计触发扫描次数
+	Watching        []string `json:"watching,omitempty"`      // 最近一轮处于「下载中」的清理目录
+	Note            string   `json:"note,omitempty"`          // 人类可读说明
 }
 
 var (
@@ -1282,8 +1282,8 @@ func offlineMonDisabledReason(minutes, taskCount int) string {
 // 允许 time.NewTicker），又语义等价（ctx 取消即热退出，不泄漏 goroutine）。
 func offlineMonitor(ctx context.Context) {
 	prev := map[string]string{} // path -> 上一轮 OfflineStatus.Status
-	var lastSig string         // 上一轮「启用态 + 间隔 + 目录数」签名，仅变化时记日志
-	var lastWatching string    // 上一轮「下载中」目录集合的签名，仅变化时记日志
+	var lastSig string          // 上一轮「启用态 + 间隔 + 目录数」签名，仅变化时记日志
+	var lastWatching string     // 上一轮「下载中」目录集合的签名，仅变化时记日志
 	for {
 		c := currentConfig()
 		tasks := cleanTasks(c.Tasks)
@@ -1402,34 +1402,44 @@ func checkCloudEventListeners(ctx context.Context, c Config, lastKey string) str
 // cloudListenerReport 依据云盘列表生成「需要记录的日志行」与稳定签名 key。
 // 纯函数，便于单测。pushLive 表示「本程序已确证仍在收到文件变更事件（FILE_SYSTEM_CHANGE）」
 // （见 pushHasLiveEvidence；注意与「收到任意推送消息」区分——日志广播不算证据）：
-//   - isCloudEventListenerRunning=true：运行中提示；
-//   - false 且 pushLive：说明该标记并不代表推送会停，降级为提示，避免误报（实证场景）；
-//   - false 且 !pushLive：如实说明「暂未收到该云盘的文件变更事件」，并指明本程序已由
-//     「离线任务监控」与「事件静默兜底扫描」自动接替。
+//   - isCloudEventListenerRunning=true：逐盘产「已就绪」行；
+//   - false 且 pushLive：不产任何日志行——这是「一切正常」的正常态、无信息量；且 pushLive 是
+//     「任一云盘来事件即置真」的全局信号，据此逐盘断言「该云盘仍能收到事件」属过度声称；
+//   - false 且 !pushLive：把所有受影响云盘合并为恰好 1 行（「、」分隔），避免多盘各刷一行的噪音。
 //
 // 2026-09-18 文案更正：isCloudEventListenerRunning=false 是部分 CD2 版本的常态，
 // 并非可修复的故障——旧文案「请到 CD2 检查该云盘连接/重新登录，或重启 CD2」是误导性的
 // 排查建议（用户实测：该字段对所有云盘恒为 false，重启 CD2 也不改变，且用户明确禁止重启
 // CD2 以免影响其它对接程序）。故此处改为中性「提示」，不再给出无效的排查动作。
+// 2026-09-19 静默化：false+pushLive 不再产日志（用户反馈不想看到该提示）；false+!pushLive
+// 从「逐盘一行」合并为「全局一行」。
 //
 // key 里含 pushLive，故「证据状态翻转」也会重记日志（否则只翻转证据时不会重新记录）。
+// 注意：false+pushLive 时虽不产日志行，key 仍随结果变化——调用方仅在 key 变化时记日志，
+// 因此「翻转但不刷日志」是预期行为（checkCloudEventListeners 对此不加特判）。
+//
+// 信息未丢失：各云盘状态同时写入 statusInfo.CloudAPIs（setCloudAPIs），前端可经 /api/state
+// 的 cloudApis 字段查看。
 func cloudListenerReport(apis []CloudAPI, pushLive bool) (lines []string, key string) {
 	parts := make([]string, 0, len(apis)+1)
+	unreported := make([]string, 0, len(apis))
 	for _, a := range apis {
 		parts = append(parts, fmt.Sprintf("%s=%v", a.Name, a.IsCloudEventListenerRunning))
 		if a.IsCloudEventListenerRunning {
 			lines = append(lines, fmt.Sprintf("CD2 云盘「%s」云端事件通道已就绪（isCloudEventListenerRunning=true）", a.Name))
 			continue
 		}
-		if pushLive {
-			lines = append(lines, fmt.Sprintf(
-				"提示：CD2 云盘「%s」未上报云端事件通道（isCloudEventListenerRunning=false）；但本程序已确证仍能收到该云盘的文件变更事件（FILE_SYSTEM_CHANGE），实时清理不受影响。",
-				a.Name))
-			continue
+		// false 且 pushLive：正常态、无信息量，且 pushLive 为全局信号不足以逐盘断言 → 不产日志。
+		if !pushLive {
+			unreported = append(unreported, a.Name)
 		}
-		lines = append(lines, fmt.Sprintf(
-			"提示：CD2 云盘「%s」未上报云端事件通道（isCloudEventListenerRunning=false），本程序暂未收到该云盘的文件变更事件。这是部分 CD2 版本的常态、并非故障；实时清理由「离线任务监控」（默认每 1 分钟）与「事件静默兜底扫描」（默认每 15 分钟）自动接替（间隔可在页面调整），也可用「手动清理」立即处理。",
-			a.Name))
+	}
+	if len(unreported) > 0 {
+		hint := fmt.Sprintf(
+			"提示：CD2 云盘「%s」未上报云端事件通道（isCloudEventListenerRunning=false），本程序暂未收到文件变更事件。这是部分 CD2 版本的常态、并非故障；实时清理由「离线任务监控」（默认每 1 分钟）与「事件静默兜底扫描」（默认每 15 分钟）自动接替（间隔可在页面调整），也可用「手动清理」立即处理。",
+			strings.Join(unreported, "、"))
+		// 提示行置于最前（它是值得注意的信号），随后再放各 true 盘的「已就绪」行。
+		lines = append([]string{hint}, lines...)
 	}
 	parts = append(parts, fmt.Sprintf("pushLive=%v", pushLive))
 	return lines, strings.Join(parts, ";")

@@ -25,9 +25,9 @@ import (
 
 func TestOfflineCompleted(t *testing.T) {
 	cases := []struct {
-		name       string
-		old, new   string
-		want       bool
+		name     string
+		old, new string
+		want     bool
 	}{
 		{"downloading转finished_完成", "downloading", "finished", true},
 		{"downloading转error_完成", "downloading", "error", true},
