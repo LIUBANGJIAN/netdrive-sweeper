@@ -174,11 +174,14 @@ func TestWebStaticMarkers_NoRunElapsedTimer(t *testing.T) {
 		}
 	}
 	// 正向：运行期日志实时滚动必须在位。
+	// 注：8s 常规轮询条件由「activeTab==='logs'&&logState.follow&&!runPollTimer」改为
+	// 「activeTab==='logs'&&!runPollTimer」——取消跟随只停自动滚动，内容仍需自动更新
+	// （2026-09-17 用户反馈「日志需要刷新才更新」）；让位运行期轮询的语义不变。
 	for _, want := range []string{
 		`function startRunPolling(){`,
 		`runPollTimer=setInterval(function(){loadLogs()`,
 		`el('runState').textContent='运行中…'`,
-		`activeTab==='logs'&&logState.follow&&!runPollTimer`,
+		`activeTab==='logs'&&!runPollTimer`,
 	} {
 		if !strings.Contains(pageHTML, want) {
 			t.Fatalf("pageHTML 缺少运行期日志滚动标记 %q", want)

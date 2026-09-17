@@ -12,9 +12,9 @@ const pageHTML = `<!doctype html>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2358a6ff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 6h18'/%3E%3Cpath d='M8 6V4h8v2'/%3E%3Cpath d='M6 6l1 14h10l1-14'/%3E%3C/svg%3E">
 <title>{{.Title}}</title>
 <style>
-/* 设计令牌：默认暗色 = 近黑 + 靛紫（Linear/Vercel/Raycast 风）。亮色经 @media (prefers-color-scheme:light) 覆盖同名令牌。
-   本轮为「可见的视觉重构」：配色换新 + 布局/层次/圆角/阴影实质性改动；仅改本样式块，
-   不改内联脚本/id/class/文案/结构；token 名（--blue、--success、--info、--danger 系列）保留、只换值。
+/* 设计令牌：默认暗色 = 近黑 + 靛紫（Linear/Vercel/Raycast 风）。亮色经 :root[data-theme="light"] 覆盖同名令牌，
+   由右上角主题开关控制（首次进入跟随系统 prefers-color-scheme，用户选择后存 localStorage）。
+   本轮为功能迭代：主题开关 + 状态元信息上移顶栏 + 日志倒序与自动更新；token 名（--blue、--success、--info、--danger 系列）保留、只换值。
    可访问性：实心按钮白字在 暗/亮 × 常态/hover 四态均 >=4.5:1；正文/次要文字 >=4.5:1；焦点环 >=3:1。 */
 :root{color-scheme:dark;
 --bg:#08090D;--bg-glow:rgba(124,108,255,.10);
@@ -35,8 +35,9 @@ const pageHTML = `<!doctype html>
 --font-mono:ui-monospace,SFMono-Regular,"JetBrains Mono","Cascadia Code",Consolas,monospace;
 --r-sm:10px;--r-md:12px;--r-lg:16px;--r-xl:20px;--s1:4px;--s2:8px;--s3:12px;--s4:20px;--s5:28px;--s6:40px;
 --z-header:100;--z-modal:300;--z-toast:400}
-/* 亮色主题：同结构镜像（白底 + 同系靛紫强调），只覆盖颜色/阴影/遮罩/悬停令牌。 */
-@media (prefers-color-scheme:light){:root{color-scheme:light;
+/* 亮色主题：同结构镜像（白底 + 同系靛紫强调），只覆盖颜色/阴影/遮罩/悬停令牌。
+   由 JS 在 <html> 上设 data-theme="light"/"dark" 切换；暗色即下方 ：root 默认值，无需重复声明。 */
+:root[data-theme="light"]{color-scheme:light;
 --bg:#F7F8FA;--bg-glow:rgba(91,75,224,.07);
 --panel:#FFFFFF;--card:#FFFFFF;--card-2:#F2F4F8;
 --line:#E6E8EE;--line-soft:#EFF1F5;
@@ -50,7 +51,7 @@ const pageHTML = `<!doctype html>
 --info:#5B4BE0;--info-bg:#4338CA;--info-hover:#3730A3;
 --ok-bg:#DCFCE7;--ok-text:#166534;--bad-bg:#FEE2E2;--bad-text:#991B1B;
 --shadow-1:0 1px 2px rgba(16,18,30,.06),0 1px 3px rgba(16,18,30,.08);--shadow-2:0 8px 24px rgba(16,18,30,.10);--shadow-3:0 24px 56px rgba(16,18,30,.18);
---head-bg:rgba(255,255,255,.82);--mask:rgba(11,12,16,.42)}}
+--head-bg:rgba(255,255,255,.82);--mask:rgba(11,12,16,.42)}
 *{box-sizing:border-box}
 body{margin:0;background:radial-gradient(1200px 560px at 50% -220px,var(--bg-glow),transparent 72%),var(--bg);font-family:var(--font-ui);color:var(--text);font-size:15px;min-height:100vh;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;line-height:1.55;transition:background-color .2s ease,color .2s ease}
 
@@ -59,8 +60,6 @@ body{margin:0;background:radial-gradient(1200px 560px at 50% -220px,var(--bg-glo
    新增 .app/.side/.content 三个结构容器；未改任何 id/class/脚本/文案。 */
 .app{display:grid;grid-template-columns:216px minmax(0,1fr);min-height:100vh}
 .side{position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:18px;padding:20px 16px;background:var(--panel);border-right:1px solid var(--line)}
-.side-meta{margin-top:6px;display:flex;flex-direction:column;gap:8px;padding-top:16px;border-top:1px solid var(--line)}
-.side-meta .tb-meta{font-size:12px}
 .content{min-width:0;display:flex;flex-direction:column}
 h1,h2,h3{margin:0;letter-spacing:-.01em}
 a{color:var(--blue)}
@@ -117,10 +116,12 @@ section.tabpane{display:none}
 /* 页内所有块统一 20px 间距：与网格列距保持一致，分布更均匀。 */
 section.tabpane.active{display:grid;gap:20px;align-content:start}
 /* 日志页：改为「全高工作区」——卡片撑满内容区剩余高度、日志区随高度伸缩（替代写死的 calc(100vh - 340px)）。
-   #tab-logs.tabpane.active 特异性 (1,2,0) > section.tabpane.active (0,2,1)，可安全覆盖。 */
+   #tab-logs.tabpane.active 特异性 (1,2,0) > section.tabpane.active (0,2,1)，可安全覆盖。
+   max-height 安全帽：.app 只是 min-height:100vh，日志超长时栅格行会随之长高、整列失去约束，
+   logbox 会被 .card 的 overflow:hidden 裁掉且无法滚动——此帽保证超长日志回到容器内滚动。 */
 #tab-logs.tabpane.active{display:flex;flex-direction:column;flex:1 1 auto;min-height:0}
 #tab-logs.tabpane.active>.card{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
-#tab-logs.tabpane.active .logbox{flex:1 1 auto}
+#tab-logs.tabpane.active .logbox{flex:1 1 auto;min-height:0;max-height:calc(100vh - 250px)}
 /* 卡片层次感：20px 圆角 + 更深的 --shadow-2，顶部 1px 高光渐变描边（::before），
    悬停时升到 --shadow-3 并轻微上浮——让卡片「浮起来」，与旧版扁平观感明显不同。 */
 .card{position:relative;overflow:hidden;background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:24px;box-shadow:var(--shadow-2);transition:box-shadow .18s ease,border-color .18s ease,transform .18s ease}
@@ -223,7 +224,7 @@ details.adv .adv-body{padding:0 12px 12px}
 .logline.err .tx{color:var(--danger-text)}
 .logline.warn .tx{color:var(--warning-text)}
 .logline.del .tx{color:var(--danger-text);font-weight:700}
-.backlatest{position:sticky;bottom:8px;display:inline-block;background:var(--info-bg);color:#fff;border:0;border-radius:999px;padding:6px 13px;font-size:13px;cursor:pointer}
+.backlatest{display:inline-block;background:var(--info-bg);color:#fff;border:0;border-radius:999px;padding:6px 13px;font-size:13px;cursor:pointer}
 
 /* ---------- banners / empty / skeleton ---------- */
 .banner{padding:10px 13px;border-radius:var(--r-md);font-size:13px;line-height:1.6;margin-bottom:var(--s3);border:1px solid}
@@ -268,13 +269,12 @@ details.adv > summary:focus-visible{outline:2px solid var(--blue);outline-offset
 
 /* ---------- responsive ---------- */
 @media(max-width:1199px){.grid2{grid-template-columns:1fr}}
-/* 左侧栏在小屏折叠为顶部横向条；主体占满整宽，避免横向滚动。状态区在小屏折成一行紧凑排布（不再隐藏，保证状态信息可见）。 */
+/* 左侧栏在小屏折叠为顶部横向条；主体占满整宽，避免横向滚动。状态元信息已上移至顶栏（随 .tb-row 自动换行）。 */
 @media(max-width:900px){
  .app{grid-template-columns:1fr}
  .side{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line);padding:12px}
  .tabs{flex-direction:row;overflow-x:auto}
  .tab{width:auto}
- .side-meta{flex-direction:row;flex-wrap:wrap;gap:6px 14px;margin-top:8px;padding-top:0;border-top:0}
 }
 @media(max-width:767px){
  .main{padding:12px}.topbar{padding:8px 12px}
@@ -304,12 +304,6 @@ details.adv > summary:focus-visible{outline:2px solid var(--blue);outline-offset
       <button class="tab" data-tab="config">① 连接 · 目录 · 规则<span class="dotmini hidden" id="tabRulesDot"></span><span class="badge count hidden" id="tabConnCount"></span></button>
       <button class="tab active" data-tab="logs">② 运行日志</button>
     </nav>
-    <div class="side-meta">
-      <span class="tb-meta">Token 根目录: <span id="tokenRoot">-</span></span>
-      <span class="tb-meta" id="runState">空闲</span>
-      <span class="tb-meta" id="lastRunMeta">-</span>
-      <span class="tb-meta">事件驱动: <span class="pushtag" id="pushState">-</span></span>
-    </div>
   </aside>
   <div class="content">
     <header class="head">
@@ -318,6 +312,11 @@ details.adv > summary:focus-visible{outline:2px solid var(--blue);outline-offset
           <div class="conn"><span class="dot" id="connDot"></span><span id="connText"><span class="skel"></span></span></div>
           <div class="perms" id="permBadges"><span class="badge neutral">权限未读取</span></div>
           <div class="tb-spacer"></div>
+          <span class="tb-meta">Token 根目录: <span id="tokenRoot">-</span></span>
+          <span class="tb-meta" id="runState">空闲</span>
+          <span class="tb-meta" id="lastRunMeta">-</span>
+          <span class="tb-meta">事件驱动: <span class="pushtag" id="pushState">-</span></span>
+          <button type="button" class="btn btn-ghost btn-sm" id="themeBtn" title="切换亮色/暗色主题">亮色</button>
           <span class="dirty hidden" id="dirtyFlag">● 有未保存的修改</span>
         </div>
         <div class="progress" id="progress"></div>
@@ -408,7 +407,7 @@ details.adv > summary:focus-visible{outline:2px solid var(--blue);outline-offset
           <span class="chip" data-log="warn">警告</span>
         </div>
         <label class="check"><input type="checkbox" id="logFollow" checked>跟随最新</label>
-        <button class="backlatest hidden" id="logBackBottom">↓ 回到最新</button>
+        <button class="backlatest hidden" id="logBackBottom">↑ 回到最新</button>
       </div>
       <div class="logbox" id="logsBox"><div class="list-empty"><span class="ico">📝</span><span class="t">暂无运行日志</span></div></div>
     </div>
@@ -640,6 +639,7 @@ function switchTab(name){
   document.querySelectorAll('.tab').forEach(function(t){t.classList.toggle('active',t.dataset.tab===name)});
   document.querySelectorAll('section.tabpane').forEach(function(s){s.classList.toggle('active',s.id==='tab-'+name)});
   window.scrollTo({top:0,behavior:'smooth'});
+  if(name==='logs')loadLogs().catch(function(){}); // 切到日志页立即拉取一次，不等下个轮询周期
 }
 el('tabs').addEventListener('click',function(e){var b=e.target.closest('.tab');if(b)switchTab(b.dataset.tab)});
 
@@ -854,7 +854,9 @@ function classify(line){
 function syncLogBack(){el('logBackBottom').classList.toggle('hidden',!!logState.follow)}
 function renderLogs(){
   var lines=(logState.raw||'').split('\n');
+  lines=lines.filter(function(l){return l.trim()!==''}); // 去掉空行：文件末尾的换行在倒序后会变成顶部空白行
   if(lines.length>2000)lines=lines.slice(lines.length-2000);
+  lines=lines.slice().reverse(); // 倒序显示：最新一条固定在最上面
   var out=[];
   lines.forEach(function(ln){
     if(logState.search&&ln.toLowerCase().indexOf(logState.search)<0)return;
@@ -866,18 +868,31 @@ function renderLogs(){
     out.push('<span class="logline '+cls+'">'+(ts?'<span class="ts">'+esc(ts)+'</span>':'')+'<span class="tx">'+esc(tx)+'</span></span>');
   });
   var box=el('logsBox');
+  var st=box.scrollTop; // 非跟随态保留阅读位置（重渲染会重置滚动，需恢复）
   if(!out.length){box.innerHTML='<div class="list-empty"><span class="ico">📝</span><span class="t">暂无运行日志</span></div>';syncLogBack();return}
   box.innerHTML=out.join('');
-  if(logState.follow){box.scrollTop=box.scrollHeight}
+  if(logState.follow){box.scrollTop=0}else{box.scrollTop=st}
   syncLogBack();
 }
 function loadLogs(){return api('/api/logs?_='+Date.now()).then(function(j){logState.raw=j.logs||'';renderLogs()})}
 el('logSearch').addEventListener('input',function(){logState.search=val('logSearch').toLowerCase();renderLogs()});
 el('logChips').addEventListener('click',function(e){var c=e.target.closest('.chip');if(!c)return;logState.level=c.dataset.log;el('logChips').querySelectorAll('.chip').forEach(function(x){x.classList.toggle('active',x===c)});renderLogs()});
-el('logFollow').addEventListener('change',function(){logState.follow=checked('logFollow');if(logState.follow){el('logsBox').scrollTop=el('logsBox').scrollHeight}syncLogBack()});
-el('logsBox').addEventListener('scroll',function(){var b=el('logsBox');var atBottom=(b.scrollHeight-b.scrollTop-b.clientHeight)<8;if(!atBottom&&checked('logFollow')){el('logFollow').checked=false;logState.follow=false;syncLogBack()}});
-el('logBackBottom').addEventListener('click',function(){logState.follow=true;el('logFollow').checked=true;el('logsBox').scrollTop=el('logsBox').scrollHeight;syncLogBack()});
+el('logFollow').addEventListener('change',function(){logState.follow=checked('logFollow');if(logState.follow){el('logsBox').scrollTop=0}syncLogBack()});
+el('logsBox').addEventListener('scroll',function(){var b=el('logsBox');var atTop=b.scrollTop<8;if(!atTop&&checked('logFollow')){el('logFollow').checked=false;logState.follow=false;syncLogBack()}});
+el('logBackBottom').addEventListener('click',function(){logState.follow=true;el('logFollow').checked=true;el('logsBox').scrollTop=0;syncLogBack()});
 function logCopy(){var box=el('logsBox');copyText(box.innerText||box.textContent||'')}
+
+/* ---------- theme toggle（右上角亮/暗开关） ---------- */
+function applyTheme(t){
+  document.documentElement.setAttribute('data-theme',t);
+  el('themeBtn').textContent=(t==='light'?'暗色':'亮色');
+}
+var savedTheme=null;try{savedTheme=localStorage.getItem('ndstheme')}catch(e){}
+applyTheme((savedTheme==='light'||savedTheme==='dark')?savedTheme:(window.matchMedia&&matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'));
+el('themeBtn').addEventListener('click',function(){
+  var t=document.documentElement.getAttribute('data-theme')==='light'?'dark':'light';
+  applyTheme(t);try{localStorage.setItem('ndstheme',t)}catch(e){}
+});
 
 /* ---------- misc ---------- */
 function formatSize(b){b=b||0;if(b<1024)return b+' B';if(b<1048576)return (b/1024).toFixed(1)+' KB';if(b<1073741824)return (b/1048576).toFixed(1)+' MB';return (b/1073741824).toFixed(2)+' GB'}
@@ -960,7 +975,9 @@ loadLastScan();
 setInterval(function(){loadPush().catch(function(){})},5000);
 // 日志是唯一结果视图：仅在「当前在日志页 且 勾选了跟随最新」时自动刷新，避免打断手动翻阅。
 // 运行期（runPollTimer 存在）由 1200ms 高频轮询负责，常规 8s 轮询让位，避免重复请求。
-setInterval(function(){if(activeTab==='logs'&&logState.follow&&!runPollTimer)loadLogs().catch(function(){})},8000);
+// 日志页可见即轮询（8s）：不再要求「跟随最新」勾选——取消跟随只停止自动滚动，
+// 内容仍需保持更新，否则用户必须手点刷新才能看到新日志（2026-09-17 用户反馈）。运行期仍由 1200ms 高频轮询让位接管。
+setInterval(function(){if(activeTab==='logs'&&!runPollTimer)loadLogs().catch(function(){})},8000);
 setInterval(loadLastScan,12000);
 </script>
 </body></html>`

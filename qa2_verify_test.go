@@ -531,7 +531,9 @@ func TestQA2_FrontendNoElapsedNoOverlay(t *testing.T) {
 		t.Fatal("pageHTML 缺少运行期 1200ms 日志轮询")
 	}
 	// 8s 常规轮询必须在运行期让位。
-	if !strings.Contains(page, "logState.follow&&!runPollTimer") {
+	// 注：条件原为「logState.follow&&!runPollTimer」；follow 项已移除（取消跟随也需自动更新内容），
+	// 让位运行期轮询的语义由 !runPollTimer 继续保证。
+	if !strings.Contains(page, "activeTab==='logs'&&!runPollTimer") {
 		t.Fatal("pageHTML 的 8s 常规轮询未在运行期让位（可能重复请求）")
 	}
 	// 运行期定时器必须在 finally 中清理（异常路径也覆盖）。
