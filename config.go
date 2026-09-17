@@ -41,12 +41,19 @@ type Config struct {
 	// 此配置把兜底显式化：事件驱动运行中，若连续 N 分钟未收到任何 FILE_SYSTEM_CHANGE，
 	// 自动执行一次扫描（持续静默时以 N 为最小间隔重复，不会刷爆网盘 API）。
 	EventFallbackScanMinutes    int      `json:"event_fallback_scan_minutes"`
+	// OfflineMonitorMinutes 是「离线任务监控」的轮询间隔（分钟）。0 = 关闭监控。
+	// 背景：事件驱动清理依赖 CD2 推送通道，而线上实例的云端原生事件监听器未运行
+	// （isCloudEventListenerRunning=false）导致文件事件断流，只能靠「事件静默兜底扫描」兜底（默认 15 分钟）。
+	// 离线任务监控提供一条更快的路径：周期性查询清理目录的离线下载状态（ListOfflineFilesByPath，
+	// 每目录 1 次轻量调用、绝不遍历文件），一旦检测到「下载中 → 完成」翻转，立即触发一次扫描，
+	// 响应速度从 15 分钟缩短到约 1 分钟。仅翻转时触发，无进行中离线任务时不触发任何扫描。
+	OfflineMonitorMinutes        int      `json:"offline_monitor_minutes"`
 	IncompleteSuffixes          string   `json:"incomplete_suffixes"`
 	Tasks                       []string `json:"tasks"`
 }
 
 // currentConfigVersion 是当前配置结构版本。新增需要迁移的语义变更时 +1，并在 migrateConfig 里补一段。
-const currentConfigVersion = 3
+const currentConfigVersion = 4
 
 // migrateConfig 对历史配置做一次性、幂等的迁移（由 ConfigVersion 控制）。
 // 每一步仅对「尚未经历该步」的旧版本生效（按来源版本判定），因此对任意版本都幂等，
@@ -80,6 +87,14 @@ func migrateConfig(c Config) Config {
 		c.EventFallbackScanMinutes = 15
 		appendLog("配置迁移 v2→v3：事件静默兜底扫描设为默认 15 分钟（可在页面「事件静默兜底扫描（分钟）」调整；填 0 关闭兜底）")
 	}
+	// v3→v4：新增 offline_monitor_minutes（离线任务监控）。
+	// 旧配置不含该字段，反序列化得 0（=关闭监控），升级后将形同不存在；
+	// 故对 v<4 一律置为新默认 1 分钟。0 是「关闭监控」的合法用户意图，
+	// 仅在 v4+ 配置下生效——normalizeConfig 不得把 0 改成 1。
+	if c.ConfigVersion < 4 {
+		c.OfflineMonitorMinutes = 1
+		appendLog("配置迁移 v3→v4：离线任务监控设为默认 1 分钟（可在页面「离线任务监控（分钟）」调整；填 0 关闭监控）")
+	}
 	c.ConfigVersion = currentConfigVersion
 	return c
 }
@@ -106,6 +121,7 @@ func defaultConfig() Config {
 		PushDebounceSeconds:         5,
 		EventScanMinIntervalMinutes: 5, // 事件驱动扫描最小间隔（分钟）：防止无关事件把扫描刷成几秒一次
 		EventFallbackScanMinutes:    15, // 事件静默兜底扫描（分钟）：文件事件断流时自动扫描，覆盖云端监听器未运行
+		OfflineMonitorMinutes:       1,  // 离线任务监控（分钟）：离线下载完成即触发扫描的快速兜底（0=关闭）
 		IncompleteSuffixes:          ".part,.download,.!qB,.bc!,.aria2,.crdownload,.td,.tmp,.!ut",
 		// Tasks 默认为空：空目录 = 不扫描任何目录（T7 裁决）。
 		// 仅影响「新装 / 重置」的默认值；已有配置维持原值（本次不迁移历史数据）。
@@ -140,6 +156,8 @@ func normalizeConfig(c Config) Config {
 	c.EventScanMinIntervalMinutes = clampInt(c.EventScanMinIntervalMinutes, 0, 1440, 5)
 	// 事件静默兜底扫描：0 = 关闭兜底；非法值回退默认 15 分钟。
 	c.EventFallbackScanMinutes = clampInt(c.EventFallbackScanMinutes, 0, 1440, 15)
+	// 离线任务监控：0 = 关闭监控；非法值回退默认 1 分钟；上限 60 分钟。
+	c.OfflineMonitorMinutes = clampInt(c.OfflineMonitorMinutes, 0, 60, 1)
 	// 防呆：未完成后缀被清空会静默废掉「含未完成后缀则整目录跳过」这道保险丝（P0-23）。
 	if strings.TrimSpace(c.IncompleteSuffixes) == "" {
 		c.IncompleteSuffixes = defaultConfig().IncompleteSuffixes

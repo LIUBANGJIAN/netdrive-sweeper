@@ -365,6 +365,7 @@ details.adv > summary:focus-visible{outline:2px solid var(--blue);outline-offset
         <div class="formgroup"><label>推送防抖秒数</label><input id="pushDebounce" type="number" value="5"><div class="help">事件驱动下合并突发变更的静默窗口。默认 5 秒（保存配置后即时生效）</div></div>
         <div class="formgroup"><label>事件扫描最小间隔（分钟）</label><input id="eventScanMinInterval" type="number" value="5"><div class="help">两次事件驱动扫描之间的最小间隔，防止无关变更把网盘 API 刷爆。默认 5 分钟；填 0 关闭冷却（恢复旧行为）</div></div>
         <div class="formgroup"><label>事件静默兜底扫描（分钟）</label><input id="eventFallbackScan" type="number" value="15"><div class="help">事件驱动运行中，若连续 N 分钟未收到任何文件变更事件（如 CD2 云端监听器未运行），自动执行一次兜底扫描。默认 15；填 0 关闭兜底</div></div>
+        <div class="formgroup"><label>离线任务监控（分钟）</label><input id="offlineMonitor" type="number" value="1"><div class="help">检测到清理目录的离线下载完成，立即触发一次扫描（比事件静默兜底的 15 分钟更快）。默认 1 分钟；填 0 关闭监控</div></div>
         <div class="formgroup"><label>未完成后缀</label><input id="incompleteSuffixes" value=".part,.download,.!qB,.bc!,.aria2,.crdownload,.td,.tmp,.!ut"><div class="help">含这些后缀的目录整目录跳过。留空会自动回填默认值，不建议清空</div></div>
       </div>
       <div class="checks">
@@ -732,7 +733,7 @@ function fillConfig(c){
   setv('address',c.address);setv('token',c.token);
   setv('adExts',c.ad_exts);setv('videoExts',c.video_exts);setv('sizeLimit',c.size_limit_mb);
   setv('opsPerSec',c.ops_per_sec);setv('cooldown',c.file_cooldown_hours);setv('excludeDirs',c.exclude_dirs);
-  setv('pushDebounce',c.push_debounce_seconds);setv('eventScanMinInterval',c.event_scan_min_interval_minutes);setv('eventFallbackScan',c.event_fallback_scan_minutes);setv('incompleteSuffixes',c.incomplete_suffixes);
+  setv('pushDebounce',c.push_debounce_seconds);setv('eventScanMinInterval',c.event_scan_min_interval_minutes);setv('eventFallbackScan',c.event_fallback_scan_minutes);setv('offlineMonitor',c.offline_monitor_minutes);setv('incompleteSuffixes',c.incomplete_suffixes);
   setv('maxFilesPerRun',c.max_files_per_run);setv('maxTotalBytes',Math.round((c.max_total_bytes||0)/1073741824*100)/100);setv('burst',c.burst);setv('maxDepth',c.max_depth);
   el('forceRefresh').checked=!!c.force_refresh;
   el('offlineOnly').checked=c.offline_only!==false;
@@ -748,7 +749,7 @@ function gatherCfg(){
     size_limit_mb:parseFloat(val('sizeLimit')||0),exclude_dirs:val('excludeDirs'),
     ops_per_sec:parseFloat(val('opsPerSec')||5),file_cooldown_hours:parseInt(val('cooldown')||0),
     incomplete_suffixes:val('incompleteSuffixes'),enable_push:checked('enablePush'),
-    push_debounce_seconds:parseInt(val('pushDebounce')||5),event_scan_min_interval_minutes:parseInt(val('eventScanMinInterval')||5),event_fallback_scan_minutes:parseInt(val('eventFallbackScan')||15),force_refresh:checked('forceRefresh'),
+    push_debounce_seconds:parseInt(val('pushDebounce')||5),event_scan_min_interval_minutes:parseInt(val('eventScanMinInterval')||5),event_fallback_scan_minutes:parseInt(val('eventFallbackScan')||15),offline_monitor_minutes:parseInt(val('offlineMonitor')||1),force_refresh:checked('forceRefresh'),
     offline_only:checked('offlineOnly'),delete_permanently:checked('deletePermanently'),allow_delete:checked('allowDelete'),
     max_files_per_run:parseInt(val('maxFilesPerRun')||2000),
     max_total_bytes:Math.round(parseFloat(val('maxTotalBytes')||10)*1073741824),
@@ -915,7 +916,7 @@ el('clearLogsBtn').addEventListener('click',function(){
   confirmDialog({title:'确认清空运行日志？',body:'将删除全部运行日志；此操作不可恢复（清理记录不受影响）。',okText:'清空日志'}).then(function(ok){if(ok)api('/api/clear_logs',{method:'POST'}).then(function(){return loadLogs()}).then(function(){toast('日志已清空','success')}).catch(function(e){toast(e.message,'error')})});
 });
 // dirty listeners
-['address','token','adExts','videoExts','sizeLimit','opsPerSec','cooldown','excludeDirs','pushDebounce','eventScanMinInterval','eventFallbackScan','incompleteSuffixes','maxFilesPerRun','maxTotalBytes','burst','maxDepth','forceRefresh','offlineOnly','deletePermanently','allowDelete','enablePush'].forEach(function(id){
+['address','token','adExts','videoExts','sizeLimit','opsPerSec','cooldown','excludeDirs','pushDebounce','eventScanMinInterval','eventFallbackScan','offlineMonitor','incompleteSuffixes','maxFilesPerRun','maxTotalBytes','burst','maxDepth','forceRefresh','offlineOnly','deletePermanently','allowDelete','enablePush'].forEach(function(id){
   var e=el(id);if(!e)return;e.addEventListener('input',function(){setDirty(true)});e.addEventListener('change',function(){setDirty(true)});
 });
 // 勾选/取消「事件驱动实时清理」：立即刷新提示（后端订阅在保存配置后才真正启停）。

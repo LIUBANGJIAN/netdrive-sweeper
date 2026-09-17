@@ -126,6 +126,10 @@ func main() {
 	// 启动即常驻自检 CD2 连接与 Token 权限：这样容器启动 / 更新镜像后，页面无需手动点
 	// 「测试连接」就能显示连接状态与权限徽章；CD2 晚启动或中途重启也能自动恢复。
 	go statusMonitor(rootCtx)
+	// 离线任务监控：周期性查询清理目录的离线下载状态，检测「下载中→完成」翻转即触发扫描。
+	// 这是事件驱动（依赖 CD2 推送）在云端监听器未运行时的快速兜底（最快约 1 分钟），比
+	// 事件静默兜底扫描（15 分钟）更快；也是对「15 分钟静默兜底」之外用户拍板需求的落地。
+	go offlineMonitor(rootCtx)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleIndex)
 	mux.HandleFunc("/api/state", handleState)
@@ -1136,6 +1140,82 @@ func statusMonitor(ctx context.Context) {
 // cloudListenerInterval 是云端事件监听器状态的稳态复查间隔（2 分钟）。它是轻量元数据查询，
 // 不遍历目录；配合「仅连接翻转时立即查一次」，既及时发现掉线又能压低请求频次。
 const cloudListenerInterval = 2 * time.Minute
+
+// offlineCompleted 判定「离线下载任务在本轮完成」：上一轮为 downloading、本轮已转为其它状态
+// （finished / error / unknown）即视为「刚完成」——即便完成态是 error/unknown，也值得触发一次
+// 扫描（目录里可能已落入部分文件，且清理前置检查会自行判断是否含未完成后缀）。
+// 纯函数，便于表驱动单测。
+func offlineCompleted(oldStatus, newStatus string) bool {
+	return oldStatus == "downloading" && newStatus != "downloading"
+}
+
+// offlineMonitor 常驻监控清理目录的离线下载状态，检测「下载中→完成」翻转即触发一次扫描。
+// 这是「离线任务监控」的核心循环：每个周期对每个清理目录做 1 次 ListOfflineFilesByPath
+// 轻量状态查询（绝不遍历目录文件内容），仅在检测到完成翻转时触发扫描，故不构成「定时扫全树」。
+//
+// 周期用 waitOrDone 实现而非 time.Ticker：既满足 QA5 风控红线（生产文件仅 runEventFallbackScanner
+// 允许 time.NewTicker），又语义等价（ctx 取消即热退出，不泄漏 goroutine）。
+func offlineMonitor(ctx context.Context) {
+	prev := map[string]string{} // path -> 上一轮 OfflineStatus.Status
+	for {
+		c := currentConfig()
+		tasks := cleanTasks(c.Tasks)
+		interval := time.Duration(c.OfflineMonitorMinutes) * time.Minute
+		if len(tasks) == 0 || interval <= 0 {
+			// 无目录 / 关闭监控：清空历史状态，避免「启用后上一次残留的 downloading」误判翻转。
+			prev = map[string]string{}
+			if !waitOrDone(ctx, 60*time.Second) {
+				return
+			}
+			continue
+		}
+		done := offlineMonitorTick(ctx, c, tasks, prev)
+		if len(done) > 0 {
+			appendLog("离线任务监控：%d 个目录的离线下载已完成，触发扫描（%s）", len(done), strings.Join(done, "、"))
+			// 与事件驱动相同的 panic 兜底：扫描期间的 panic 不拖垮本监控循环。
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						appendLog("离线监控触发扫描发生 panic：%v\n%s", r, debug.Stack())
+					}
+				}()
+				// runScan 自带 scanBusy 互斥，进行中会返回「已有扫描任务」错误，忽略即可。
+				if _, err := runScan(ctx, currentConfig().AllowDelete); err != nil {
+					appendLog("离线监控触发扫描跳过：%v", err)
+				}
+			}()
+		}
+		if !waitOrDone(ctx, interval) {
+			return
+		}
+	}
+}
+
+// offlineMonitorTick 查询一轮全部清理目录的离线状态，返回本轮检测到「离线下载完成」的目录路径。
+// CD2 不可达 / 未配置 / 查询超时一律静默降级（返回 nil，本轮不触发、也清空 prev 之外不上抛错误）。
+// prev 参数会被本函数原地更新为下一轮对比的基线。
+func offlineMonitorTick(ctx context.Context, c Config, tasks []string, prev map[string]string) []string {
+	client, err := newCD2Client(c)
+	if err != nil {
+		return nil
+	}
+	defer client.Close()
+	tctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := client.TCPCheck(tctx); err != nil {
+		return nil
+	}
+	done := []string{}
+	for _, t := range tasks {
+		st := client.OfflineStatus(tctx, t)
+		old := prev[t]
+		if offlineCompleted(old, st.Status) {
+			done = append(done, t)
+		}
+		prev[t] = st.Status
+	}
+	return done
+}
 
 // checkCloudEventListeners 查询各云盘的云端事件监听器状态（轻量元数据，不遍历目录），
 // 写入 statusInfo.CloudAPIs，并在结果变化时记日志（isCloudEventListenerRunning=false 按证据分级提示，非绝对告警）。
