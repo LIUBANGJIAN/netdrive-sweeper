@@ -35,14 +35,15 @@ type Config struct {
 	// 事件会让防抖每几秒就触发一次全目录扫描。此间隔给事件驱动扫描设下限，保护网盘 API 不被刷爆。
 	EventScanMinIntervalMinutes int `json:"event_scan_min_interval_minutes"`
 	// EventFallbackScanMinutes 是「事件静默兜底扫描」的间隔（分钟）。0 = 关闭兜底。
-	// 背景：事件驱动清理依赖 CD2 的推送通道；当 CD2 云端原生事件监听器未运行
-	// （isCloudEventListenerRunning=false）或文件变更事件断流时，清理范围内的事件永远不会
-	// 到来，扫描将无限期静默——旧版「任何 FSC 事件都触发扫描」的行为恰好意外充当了兜底。
+	// 背景：事件驱动清理依赖 CD2 的推送通道；当 CD2 未上报云端事件通道
+	// （isCloudEventListenerRunning=false，部分版本的常态）或文件变更事件断流时，清理范围内的事件
+	// 永远不会到来，扫描将无限期静默——旧版「任何 FSC 事件都触发扫描」的行为恰好意外充当了兜底。
 	// 此配置把兜底显式化：事件驱动运行中，若连续 N 分钟未收到任何 FILE_SYSTEM_CHANGE，
 	// 自动执行一次扫描（持续静默时以 N 为最小间隔重复，不会刷爆网盘 API）。
+	// 语义提示：文件事件长期断流时，本兜底等价于「每 N 分钟扫描一次」的有界轮询。
 	EventFallbackScanMinutes    int      `json:"event_fallback_scan_minutes"`
-	// OfflineMonitorMinutes 是「离线任务监控」的轮询间隔（分钟）。0 = 关闭监控。
-	// 背景：事件驱动清理依赖 CD2 推送通道，而线上实例的云端原生事件监听器未运行
+	// OfflineMonitorMinutes 是「离线任务监控」的检查间隔（分钟）。0 = 关闭监控。
+	// 背景：事件驱动清理依赖 CD2 推送通道，而线上实例未上报云端事件通道
 	// （isCloudEventListenerRunning=false）导致文件事件断流，只能靠「事件静默兜底扫描」兜底（默认 15 分钟）。
 	// 离线任务监控提供一条更快的路径：周期性查询清理目录的离线下载状态（ListOfflineFilesByPath，
 	// 每目录 1 次轻量调用、绝不遍历文件），一旦检测到「下载中 → 完成」翻转，立即触发一次扫描，

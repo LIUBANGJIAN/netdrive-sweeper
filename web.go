@@ -74,7 +74,8 @@ a{color:var(--blue)}
 .tb-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .brand{display:flex;align-items:center;gap:9px}
 .brand svg{width:20px;height:20px;stroke:var(--blue)}
-.brand h1{font-size:20px;font-weight:800;letter-spacing:-.02em;color:var(--text)}
+.brand h1{font-size:20px;font-weight:800;letter-spacing:-.02em;color:var(--text);display:flex;align-items:baseline;gap:6px}
+.brand h1 .ver{font-size:11px;font-weight:600;letter-spacing:0;color:var(--muted);font-family:var(--font-mono,ui-monospace,SFMono-Regular,Menlo,monospace)}
 .conn{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
 .dot{width:8px;height:8px;border-radius:999px;background:var(--muted);flex:0 0 auto}
 .dot.ok{background:var(--green);box-shadow:0 0 10px color-mix(in srgb,var(--green) 55%,transparent)}
@@ -298,7 +299,7 @@ details.adv > summary:focus-visible{outline:2px solid var(--blue);outline-offset
   <aside class="side">
     <div class="brand">
       <svg viewBox="0 0 24 24" fill="none" stroke="#58a6ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/></svg>
-      <h1>NetDrive Sweeper</h1>
+      <h1>NetDrive Sweeper<span class="ver">{{.Version}}</span></h1>
     </div>
     <nav class="tabs" id="tabs">
       <button class="tab" data-tab="config">① 连接 · 目录 · 规则<span class="dotmini hidden" id="tabRulesDot"></span><span class="badge count hidden" id="tabConnCount"></span></button>
@@ -364,8 +365,8 @@ details.adv > summary:focus-visible{outline:2px solid var(--blue);outline-offset
         <div class="formgroup"><label>排除关键词</label><input id="excludeDirs" value="重要,备份"><div class="help">目录名包含任一关键词即整目录跳过。重要目录务必填入</div></div>
         <div class="formgroup"><label>推送防抖秒数</label><input id="pushDebounce" type="number" value="5"><div class="help">事件驱动下合并突发变更的静默窗口。默认 5 秒（保存配置后即时生效）</div></div>
         <div class="formgroup"><label>事件扫描最小间隔（分钟）</label><input id="eventScanMinInterval" type="number" value="5"><div class="help">两次事件驱动扫描之间的最小间隔，防止无关变更把网盘 API 刷爆。默认 5 分钟；填 0 关闭冷却（恢复旧行为）</div></div>
-        <div class="formgroup"><label>事件静默兜底扫描（分钟）</label><input id="eventFallbackScan" type="number" value="15"><div class="help">事件驱动运行中，若连续 N 分钟未收到任何文件变更事件（如 CD2 云端监听器未运行），自动执行一次兜底扫描。默认 15；填 0 关闭兜底</div></div>
-        <div class="formgroup"><label>离线任务监控（分钟）</label><input id="offlineMonitor" type="number" value="1"><div class="help">检测到清理目录的离线下载完成，立即触发一次扫描（比事件静默兜底的 15 分钟更快）。默认 1 分钟；填 0 关闭监控</div></div>
+        <div class="formgroup"><label>事件静默兜底扫描（分钟）</label><input id="eventFallbackScan" type="number" value="15"><div class="help">事件驱动运行时，若连续 N 分钟未收到任何文件变更事件（CD2 未上报云端事件通道时即为此状态），自动执行一次兜底扫描。文件事件长期断流时，它等价于「每 N 分钟扫描一次」的有界轮询。默认 15；填 0 关闭兜底</div></div>
+        <div class="formgroup"><label>离线任务监控（分钟）</label><input id="offlineMonitor" type="number" value="1"><div class="help">检测到清理目录的离线下载完成，立即触发一次扫描（比事件静默兜底的 15 分钟更快）；每轮只查各目录的离线状态，不遍历文件。默认 1 分钟；填 0 关闭监控</div></div>
         <div class="formgroup"><label>未完成后缀</label><input id="incompleteSuffixes" value=".part,.download,.!qB,.bc!,.aria2,.crdownload,.td,.tmp,.!ut"><div class="help">含这些后缀的目录整目录跳过。留空会自动回填默认值，不建议清空</div></div>
       </div>
       <div class="checks">
@@ -424,7 +425,8 @@ details.adv > summary:focus-visible{outline:2px solid var(--blue);outline-offset
 <script>
 var state={},dirty=false,lastScan=null,lastScanTime='',lastToken=null,savedOnce=false;
 var lastPush={state:'off',detail:'',events:0,lastEvent:''};
-var lastStatus=null; // 最近的 /api/state|/api/push 运行状态（含 cloudApis 云端事件监听器状态）
+var lastStatus=null; // 最近的 /api/state|/api/push 运行状态（含 cloudApis 云端事件通道状态）
+var lastOffMon=null; // 最近的「离线任务监控」运行态（/api/state|/api/push 的 offlineMonitor）
 var inContainer=false; // 后端探测：当前进程是否运行在容器内（用于桥接模式地址防呆提示）
 var logState={level:'all',search:'',follow:true,raw:''};
 var activeTab='logs';
@@ -544,20 +546,31 @@ function renderPerms(info){
 // 事件驱动状态：不再由前端「猜」权限，而是直接展示后端的真实订阅状态（问题 1 的根因修复）。
 // 此前用 lastToken.allowPushMessage 在前端推断并常驻告警，token 状态稍一陈旧就会误报
 // 「缺少 allow_push_message」，甚至与徽章显示自相矛盾。现在唯一可信来源是后端。
-var PUSH_LABEL={off:'已停止',config_missing:'未启用',connecting:'连接中…',running:'运行中',denied:'权限不足',error:'连接失败'};
+// 标签语义（2026-09-18 更正）：running 只代表 PushMessage「订阅已建立」，并不代表文件变更事件
+// 正在投递。故 running 记为「已连接」，并在近期未收到 FILE_SYSTEM_CHANGE 时如实标注「无文件事件」，
+// 避免「事件驱动: 运行中」被误读为「实时清理正在正常工作」。
+var PUSH_LABEL={off:'已停止',config_missing:'未启用',connecting:'连接中…',running:'已连接',denied:'权限不足',error:'连接失败'};
 var PUSH_COLOR={off:'var(--muted)',config_missing:'var(--warning-text)',connecting:'var(--warning-text)',running:'var(--success-text)',denied:'var(--danger-text)',error:'var(--danger-text)'};
 /* 存活可观测性（D5）时间辅助：后端时间戳为 "YYYY-MM-DD HH:MM:SS"（本地时间）。 */
 function parseTS(s){if(!s)return 0;var t=Date.parse(String(s).replace(' ','T'));return isNaN(t)?0:t}
 function agoText(s){var t=parseTS(s);if(!t)return '';var d=Date.now()-t;if(d<0)d=0;var m=Math.floor(d/60000);if(m<1)return '刚刚';if(m<60)return m+' 分钟前';var h=Math.floor(m/60);if(h<48)return h+' 小时前';return Math.floor(h/24)+' 天前'}
 function durText(s){var t=parseTS(s);if(!t)return '';var d=Date.now()-t;if(d<0)d=0;var m=Math.floor(d/60000);if(m<60)return m+' 分钟';var h=Math.floor(m/60);if(h<48)return h+' 小时';return Math.floor(h/24)+' 天'}
 var PUSH_STALE_MS=30*60*1000; // 运行中但超过 30 分钟无任何推送 → 黄色提示（给用户的自证手段）
+/* 文件事件通道存活证据：订阅 running 且最近一次收到 FILE_SYSTEM_CHANGE(=4)（无论是否在清理范围内）
+   在 10 分钟内，才算「确证仍在投递文件事件」。与后端 pushEvidenceWindow（main.go）同口径。
+   绝不能用 lastMessageAt——LOG_MESSAGE=7 是 CD2 自身的日志广播，与文件事件通道是否存活无关，
+   用它会把「心跳还在、文件事件已断流」误判为健康（2026-09-17 线上实例）。 */
+function pushLiveEvidence(){if(!lastPush||lastPush.state!=='running')return false;var lf=parseTS(lastPush.lastFileEventAt);return !!lf&&(Date.now()-lf)<=600000}
 function renderPush(p){
   if(p)lastPush=p;
-  var tag=el('pushState');
-  tag.textContent=PUSH_LABEL[lastPush.state]||lastPush.state||'-';
-  tag.style.color=PUSH_COLOR[lastPush.state]||'var(--muted)';
-  tag.title=lastPush.detail||'';
   var st=lastPush.state,html='';
+  var pushLive=pushLiveEvidence();
+  var tag=el('pushState');
+  var label=PUSH_LABEL[st]||st||'-';
+  if(st==='running'&&!pushLive)label='已连接（无文件事件）';
+  tag.textContent=label;
+  tag.style.color=PUSH_COLOR[st]||'var(--muted)';
+  tag.title=lastPush.detail||'';
   if(st==='running'){
     var meta=[];
     if(lastPush.gen)meta.push('世代 '+lastPush.gen);
@@ -566,10 +579,14 @@ function renderPush(p){
     if(lastPush.reconnects)meta.push('重连 '+lastPush.reconnects+' 次');
     var live='';
     if(lastPush.lastEventPath)live+='（最近变更 '+esc(lastPush.lastEventPath)+'）';
-    html='<div class="banner banner-info">事件驱动实时清理<b>运行中</b>：'+esc(lastPush.detail||'')+'；已收到 '+(lastPush.events||0)+' 个文件变更事件'+(lastPush.lastEvent?('，最近 '+esc(lastPush.lastEvent)):'')+live+'。<br><span style="opacity:.75">'+esc(meta.join(' · '))+'</span></div>';
+    if(pushLive){
+      html='<div class="banner banner-info">事件驱动实时清理<b>已连接</b>：PushMessage 订阅正常，已确证仍能收到文件变更事件；累计 '+(lastPush.events||0)+' 个'+(lastPush.lastEvent?('，最近 '+esc(lastPush.lastEvent)):'')+live+'。<br><span style="opacity:.75">'+esc(meta.join(' · '))+'</span></div>';
+    }else{
+      html='<div class="banner banner-warn">事件驱动实时清理<b>已连接，但暂无文件变更事件</b>：PushMessage 订阅正常，近期未收到 FILE_SYSTEM_CHANGE。实时清理由「离线任务监控」与「事件静默兜底扫描」自动接替（间隔可在页面调整），也可随时「手动清理」。<br><span style="opacity:.75">'+esc(meta.join(' · '))+'</span></div>';
+    }
     var anchor=parseTS(lastPush.lastMessageAt)||parseTS(lastPush.subscribedAt);
     if(anchor&&(Date.now()-anchor)>PUSH_STALE_MS){
-      html+='<div class="banner banner-warn">订阅存活但已超过 30 分钟未收到任何推送；若期间有文件变更未被清理，请检查 CD2 云端事件监听器（isCloudEventListenerRunning）。</div>';
+      html+='<div class="banner banner-warn">订阅存活但已超过 30 分钟未收到任何推送；若期间有文件变更未被清理，将由「离线任务监控」与「事件静默兜底扫描」自动接替（间隔可在页面调整）。</div>';
     }
   }else if(st==='denied'){
     html='<div class="banner banner-danger">事件驱动实时清理<b>未生效</b>：'+esc(lastPush.detail||'')+'。请在 CD2 为该 Token 勾选 allow_push_message，然后回本页点「保存配置」（无需重启容器）。</div>';
@@ -586,26 +603,28 @@ function renderPush(p){
   if(st!=='running'&&lastPush.lastError){
     html+='<div class="banner banner-warn">最近一次订阅失败：'+esc(lastPush.lastError)+(lastPush.lastErrorAt?('（'+esc(lastPush.lastErrorAt)+'）'):'')+'。</div>';
   }
-  // 云端原生事件监听器状态：仅在拿到数据且确有掉线云盘时提示（拿不到时静默降级，不误报）。
-  // 关键更正：isCloudEventListenerRunning=false 只代表 CD2「云端原生推送通道」未开启，
-  // 并不必然意味着本程序的 PushMessage 订阅会停。故按「是否已确证仍在投递」分级，
-  // 去掉吓人的红字绝对化断言（用户已被该误报困扰）。
+  // 云端事件通道状态：仅在拿到数据且确有未上报的云盘时提示（拿不到时静默降级，不误报）。
+  // 文案口径（2026-09-18 更正）：isCloudEventListenerRunning=false 只代表该云盘未上报「云端事件通道」，
+  // 是部分 CD2 版本的常态、并非可修复的故障——不再给出「检查云盘连接 / 重启 CD2」这类无效排查动作。
   if(lastStatus&&lastStatus.cloudApis&&lastStatus.cloudApis.length){
     var down=lastStatus.cloudApis.filter(function(a){return a.isCloudEventListenerRunning===false});
-    /* 与后端 pushEvidenceWindow（main.go，10 分钟）同口径：订阅 running 且最近一次收到
-       FILE_SYSTEM_CHANGE(=4)（无论是否在清理范围内）在 10 分钟内，才算「已确证仍在投递文件事件」。
-       不能用 lastMessageAt——LOG_MESSAGE=7 是 CD2 自身的日志广播，与文件事件通道是否存活无关，
-       用它会把「心跳还在、文件事件已断流」误判为健康（2026-09-17 线上实例）。 */
-    var pushLive=false;
-    if(lastPush.state==='running'){
-      var lf=parseTS(lastPush.lastFileEventAt);
-      pushLive=!!lf&&(Date.now()-lf)<=600000;
-    }
     if(down.length&&!pushLive){
-      html+='<div class="banner banner-warn">警示：CD2 云盘「'+down.map(function(a){return esc(a.name)}).join('、')+'」的云端原生事件监听器未运行，且最近未收到任何文件变更事件——此状态下事件驱动清理可能失效。请到 CD2 检查该云盘连接/重新登录或重启 CD2，回来后点「保存配置」重订阅；本程序将按「事件静默兜底扫描」设置自动兜底（默认每 15 分钟一次），期间也可用「手动清理」立即处理。</div>';
+      html+='<div class="banner banner-info">提示：CD2 云盘「'+down.map(function(a){return esc(a.name)}).join('、')+'」未上报云端事件通道，且最近未收到任何文件变更事件。这是部分 CD2 版本的常态、并非故障；实时清理由「离线任务监控」与「事件静默兜底扫描」自动接替，也可用「手动清理」立即处理。</div>';
     }else if(down.length&&pushLive){
-      html+='<div class="banner banner-info">CD2 云盘「'+down.map(function(a){return esc(a.name)}).join('、')+'」上报云端原生事件监听器未运行，但本程序已确证仍能收到文件变更事件（FILE_SYSTEM_CHANGE），事件驱动清理不受影响。</div>';
+      html+='<div class="banner banner-info">CD2 云盘「'+down.map(function(a){return esc(a.name)}).join('、')+'」未上报云端事件通道，但本程序已确证仍能收到文件变更事件（FILE_SYSTEM_CHANGE），实时清理不受影响。</div>';
     }
+  }
+  // 离线任务监控状态：直接回答「它到底有没有在跑」。此前该项在界面上毫无可观测性，
+  // 用户只能看到「没有日志」，无法区分「未生效」与「在跑、但暂无离线任务完成」。
+  if(lastOffMon){
+    var om=lastOffMon,omTxt;
+    if(om.enabled){
+      var w=(om.watching&&om.watching.length)?('，当前下载中：'+esc(om.watching.join('、'))):'，当前无进行中的离线下载';
+      omTxt='已开启 · 每 '+om.intervalMinutes+' 分钟检查一次'+(om.lastCheckAt?('，最近检查 '+agoText(om.lastCheckAt)):'，尚未开始首轮检查')+w+(om.triggers?('，累计触发 '+om.triggers+' 次'):'');
+    }else{
+      omTxt='未启用'+(om.note?('（'+esc(om.note)+'）'):'');
+    }
+    html+='<div class="banner banner-info">离线任务监控：'+omTxt+'。</div>';
   }
   el('pushHint').innerHTML=html;
 }
@@ -931,6 +950,7 @@ window.addEventListener('beforeunload',function(e){if(dirty){e.preventDefault();
 function loadPush(){
   return api('/api/push?_='+Date.now()).then(function(j){
     if(j.status)lastStatus=j.status;
+    if(j.offlineMonitor)lastOffMon=j.offlineMonitor;
     renderPush(j.push);
     if(typeof j.inContainer==='boolean')inContainer=j.inContainer;
     renderAddrHint();
@@ -962,6 +982,7 @@ function load(){
     state=j;fillConfig(j.config);
     var t=validTime(j.lastScanAt);if(t)lastScanTime=t;
     lastStatus=j.status||null;
+    if(j.offlineMonitor)lastOffMon=j.offlineMonitor;
     renderPush(j.push);
     inContainer=(j.inContainer===true);
     renderAddrHint();

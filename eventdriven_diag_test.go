@@ -404,24 +404,33 @@ func TestDiag_ReconnectJitterBounded(t *testing.T) {
 // ==================== (d) GetAllCloudApis 解析 + 仅变化时记一次 ====================
 
 // d1: cloudListenerReport——isCloudEventListenerRunning=false 的文案按「是否仍能收到文件变更事件」分级：
-// 无文件事件证据时产出「警示」（给出可执行排查建议，不再误称「无需处理」）；
+// 无文件事件证据时产出中性「提示」（如实说明暂未收到文件变更事件，并指明已由「离线任务监控」+
+// 「事件静默兜底扫描」自动接替，给出「手动清理」兜底入口；不再误称「无需处理」）；
 // 有证据（最近收到 FILE_SYSTEM_CHANGE）时产出「已确证仍能收到文件变更事件」的提示，避免误报。
 // 2026-09-17 更正：证据必须是 FILE_SYSTEM_CHANGE——LOG_MESSAGE=7 是 CD2 自身日志广播，
 // 与文件事件通道是否存活无关（线上曾据此误判「订阅存活，无需处理」）。
+// 2026-09-18 文案更正：isCloudEventListenerRunning=false 是部分 CD2 版本的常态、并非可修复故障，
+// 故不再用「警示」措辞、不再给出「重启 CD2 / 检查云盘连接」这类无效排查动作（用户明令禁止重启 CD2）。
 func TestDiag_CloudListenerReport_GradedByEvidence(t *testing.T) {
-	// pushLive=false：警示级，带可执行建议；不出现旧的「无需处理」误判，也不作绝对化断言。
+	// pushLive=false：中性「提示」，如实说明 + 自动接替说明；不出现旧的「无需处理」误判，也不作绝对化断言。
 	lines, key := cloudListenerReport([]CloudAPI{{Name: "115", IsCloudEventListenerRunning: false}}, false)
 	if len(lines) != 1 {
 		t.Fatalf("应产出 1 行，实际 %d", len(lines))
 	}
-	if !strings.Contains(lines[0], "警示") || !strings.Contains(lines[0], "未运行") {
-		t.Fatalf("false 应产警示，实际 %q", lines[0])
+	if !strings.Contains(lines[0], "提示") || !strings.Contains(lines[0], "未上报云端事件通道") {
+		t.Fatalf("false 应产中性「提示」并说明未上报云端事件通道，实际 %q", lines[0])
+	}
+	if !strings.Contains(lines[0], "离线任务监控") || !strings.Contains(lines[0], "事件静默兜底扫描") {
+		t.Fatalf("无证据提示应指明由「离线任务监控」+「事件静默兜底扫描」自动接替，实际 %q", lines[0])
 	}
 	if !strings.Contains(lines[0], "手动清理") {
-		t.Fatalf("无证据警示应给出「手动清理」兜底建议，实际 %q", lines[0])
+		t.Fatalf("无证据提示应保留「手动清理」兜底入口，实际 %q", lines[0])
 	}
 	if strings.Contains(lines[0], "无需处理") {
 		t.Fatalf("无文件事件证据时不得再声称「无需处理」，实际 %q", lines[0])
+	}
+	if strings.Contains(lines[0], "重启 CD2") || strings.Contains(lines[0], "检查该云盘连接") {
+		t.Fatalf("不得再出现「重启 CD2 / 检查云盘连接」这类无效排查建议，实际 %q", lines[0])
 	}
 	if strings.Contains(lines[0], "CD2 将不再推送文件变更事件") {
 		t.Fatalf("不应再出现「CD2 将不再推送文件变更事件」的绝对化断言，实际 %q", lines[0])
@@ -504,10 +513,15 @@ func TestDiag_ParseCloudAPIs_FromDynamicMessage(t *testing.T) {
 		t.Fatalf("第 2 个云盘解析错误：%+v", got[1])
 	}
 
-	// 关键链路：解析结果喂给 cloudListenerReport，必须对 false 的那个产警示（无文件事件证据时）。
+	// 关键链路：解析结果喂给 cloudListenerReport，必须对 false 的那个产中性「提示」（无文件事件证据时），
+	// 且不得再给出「重启 CD2 / 检查云盘连接」这类无效排查动作（2026-09-18 文案更正）。
 	lines, key := cloudListenerReport(got, false)
-	if !strings.Contains(strings.Join(lines, "\n"), "警示") {
-		t.Fatalf("含 false 的解析结果应产警示，实际 %v", lines)
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "提示") || !strings.Contains(joined, "未上报云端事件通道") {
+		t.Fatalf("含 false 的解析结果应产中性「提示」并说明未上报云端事件通道，实际 %v", lines)
+	}
+	if strings.Contains(joined, "重启 CD2") || strings.Contains(joined, "检查该云盘连接") {
+		t.Fatalf("不得再出现「重启 CD2 / 检查云盘连接」这类无效排查建议，实际 %v", lines)
 	}
 	if !strings.Contains(key, "115=false") {
 		t.Fatalf("key 应含 115=false，实际 %q", key)

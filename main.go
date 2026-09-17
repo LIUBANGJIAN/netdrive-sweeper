@@ -19,6 +19,48 @@ import (
 
 const appName = "NetDrive Sweeper"
 
+// appVersion 是产品语义化版本号，显示在页面左上角标题旁，便于用户区分部署的版本。
+// 构建时可用 -ldflags "-X main.appVersion=x.y.z" 覆盖（Dockerfile / CI 均从仓库根的 VERSION
+// 文件注入）；未覆盖时回落到下面的默认值。修改版本号时请同时更新 VERSION 文件。
+var appVersion = "1.1.0"
+
+// versionLabel 是用于展示的完整版本串：v<版本号>，并在构建信息可得时附上 VCS 修订短 SHA
+// （形如 v1.0.0 (a1b2c3d)，工作区有未提交改动时带 -dirty）。进程启动时计算一次，
+// 避免每次页面渲染都调用 debug.ReadBuildInfo。
+var versionLabel = func() string {
+	label := "v" + appVersion
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return label
+	}
+	var rev, modified string
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			rev = s.Value
+		case "vcs.modified":
+			if s.Value == "true" {
+				modified = "-dirty"
+			}
+		}
+	}
+	if len(rev) > 7 {
+		rev = rev[:7]
+	}
+	if rev != "" {
+		label += " (" + rev + modified + ")"
+	}
+	return label
+}()
+
+// intervalText 把「分钟」配置渲染为可读文本；0 或负数表示关闭。
+func intervalText(minutes int) string {
+	if minutes <= 0 {
+		return "关闭"
+	}
+	return fmt.Sprintf("每 %d 分钟", minutes)
+}
+
 var (
 	configPath  = getenv("CONFIG_PATH", "data/config.json")
 	recordsPath = getenv("RECORDS_PATH", "data/records.jsonl")
@@ -118,8 +160,10 @@ func main() {
 	if cfg.DeletePermanently {
 		delMode = "永久删除"
 	}
-	appendLog("系统启动 | 地址=%s 事件驱动=%v 防抖=%ds 冷却=%dh 删除方式=%s 允许删除=%v 清理目录=%d 个",
-		cfg.Address, cfg.EnablePush, cfg.PushDebounceSeconds, cfg.FileCooldownHours, delMode, cfg.AllowDelete, len(cfg.Tasks))
+	appendLog("系统启动 | 版本=%s 地址=%s 事件驱动=%v 防抖=%ds 冷却=%dh 删除方式=%s 允许删除=%v 清理目录=%d 个",
+		versionLabel, cfg.Address, cfg.EnablePush, cfg.PushDebounceSeconds, cfg.FileCooldownHours, delMode, cfg.AllowDelete, len(cfg.Tasks))
+	appendLog("兜底策略 | 离线任务监控=%s 事件静默兜底=%s（0=关闭；均可随时在页面「清理规则」调整）",
+		intervalText(cfg.OfflineMonitorMinutes), intervalText(cfg.EventFallbackScanMinutes))
 	// 事件驱动实时清理（P0-27）：常驻订阅 CD2 PushMessage，是替代定时轮询的唯一合法实时感知方式。
 	// 由 pushSupervisor 统一管理：配置一旦保存即热启动 / 热重启，无需重启容器。
 	go pushSupervisor(rootCtx)
@@ -184,7 +228,7 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 	// 页面是内联单文件（HTML+CSS+JS 一体），必须禁缓存，否则修好的前端逻辑会被旧副本掩盖。
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
-	_ = pageTpl.Execute(w, map[string]any{"Title": appName})
+	_ = pageTpl.Execute(w, map[string]any{"Title": appName, "Version": versionLabel})
 }
 
 func handleState(w http.ResponseWriter, r *http.Request) {
@@ -193,7 +237,7 @@ func handleState(w http.ResponseWriter, r *http.Request) {
 	s := statusInfo
 	at := lastScanAt
 	stateMu.Unlock()
-	writeJSON(w, map[string]any{"config": c, "status": s, "push": pushSnapshot(), "lastScanAt": at, "inContainer": inContainer()})
+	writeJSON(w, map[string]any{"config": c, "status": s, "push": pushSnapshot(), "offlineMonitor": offlineMonSnapshot(), "lastScanAt": at, "inContainer": inContainer()})
 }
 
 func handleSave(w http.ResponseWriter, r *http.Request) {
@@ -350,7 +394,7 @@ func handlePush(w http.ResponseWriter, r *http.Request) {
 	at := lastScanAt
 	s := statusInfo
 	stateMu.Unlock()
-	writeJSON(w, map[string]any{"ok": true, "push": pushSnapshot(), "lastScanAt": at, "status": s, "inContainer": inContainer()})
+	writeJSON(w, map[string]any{"ok": true, "push": pushSnapshot(), "offlineMonitor": offlineMonSnapshot(), "lastScanAt": at, "status": s, "inContainer": inContainer()})
 }
 
 func handleClearLogs(w http.ResponseWriter, r *http.Request) {
@@ -494,10 +538,12 @@ func fallbackScanDue(now, lastFileEvent, lastFallback, start time.Time, interval
 }
 
 // runEventFallbackScanner 是「事件静默兜底扫描」循环：事件驱动订阅运行期间，若连续 interval
-// 未收到任何 FILE_SYSTEM_CHANGE（典型原因：CD2 云端原生事件监听器未运行，文件事件断流），
-// 自动执行一次扫描。每分钟检查一次；触发走与事件驱动相同的 trigger（自带扫描互斥与 panic 兜底）。
+// 未收到任何 FILE_SYSTEM_CHANGE（典型原因：CD2 未上报云端事件通道，文件事件断流——这是
+// CD2 服务端状态，本程序无从修复），自动执行一次扫描。每分钟检查一次；触发走与事件驱动相同的
+// trigger（自带扫描互斥与 panic 兜底）。
 // 背景：旧版（F1 范围过滤之前）任何 FSC 事件都会触发扫描，CD2 自身操作的涓流事件意外充当了
-// 高频兜底；F1 精确化后，云端监听器未运行的实例会完全静默——本循环把兜底显式化且可控。
+// 高频兜底；F1 精确化后，文件事件断流的实例会完全静默——本循环把兜底显式化且可控。
+// 语义提示：文件事件长期断流时，本循环等价于「以 interval 为周期的一次扫描」（有界轮询，非无脑扫全树）。
 // ctx 取消（配置热重启/停机）时退出，由调用方随新订阅世代重新拉起。
 func runEventFallbackScanner(ctx context.Context, interval time.Duration, trigger func(), logf func(format string, args ...any)) {
 	if interval <= 0 || trigger == nil {
@@ -519,7 +565,7 @@ func runEventFallbackScanner(ctx context.Context, interval time.Duration, trigge
 		}
 		lastFallback = now
 		if logf != nil {
-			logf("事件静默已超过 %s（未收到任何文件变更事件，CD2 云端监听器可能未运行），执行兜底扫描", interval)
+			logf("事件静默已超过 %s（期间未收到任何文件变更事件），执行兜底扫描", interval)
 		}
 		trigger()
 	}
@@ -1149,29 +1195,134 @@ func offlineCompleted(oldStatus, newStatus string) bool {
 	return oldStatus == "downloading" && newStatus != "downloading"
 }
 
+// OfflineMonitorRuntime 描述「离线任务监控」的实时状态，供页面直接展示。
+// 目的：回答用户最关心的问题——「离线监控到底有没有在跑？」此前该项在界面上毫无可观测性，
+// 用户只能看到「没有日志」，无从判断它是「没生效」还是「在跑但恰好没有离线任务完成」。
+type OfflineMonitorRuntime struct {
+	Enabled         bool     `json:"enabled"`                   // 是否启用（间隔 > 0 且有清理目录）
+	IntervalMinutes int      `json:"intervalMinutes"`           // 当前检查间隔（分钟）；0=关闭
+	Since           string   `json:"since,omitempty"`           // 进入当前启用/关闭状态的时间
+	LastCheckAt     string   `json:"lastCheckAt,omitempty"`     // 最近一轮状态查询的时间
+	LastTriggerAt   string   `json:"lastTriggerAt,omitempty"`   // 最近一次因「离线完成」触发扫描的时间
+	Triggers        int      `json:"triggers"`                  // 累计触发扫描次数
+	Watching        []string `json:"watching,omitempty"`        // 最近一轮处于「下载中」的清理目录
+	Note            string   `json:"note,omitempty"`            // 人类可读说明
+}
+
+var (
+	offMonMu   sync.Mutex
+	offMonStat = OfflineMonitorRuntime{Note: "未启动"}
+)
+
+// offlineMonSnapshot 返回离线监控状态的深拷贝快照（供 /api/state 与 /api/push 输出）。
+func offlineMonSnapshot() OfflineMonitorRuntime {
+	offMonMu.Lock()
+	defer offMonMu.Unlock()
+	s := offMonStat
+	if offMonStat.Watching != nil {
+		s.Watching = append([]string(nil), offMonStat.Watching...)
+	}
+	return s
+}
+
+// setOfflineMonState 更新离线监控的启用态与说明（自持锁）。
+func setOfflineMonState(enabled bool, interval int, note string) {
+	offMonMu.Lock()
+	defer offMonMu.Unlock()
+	if offMonStat.Enabled != enabled || offMonStat.IntervalMinutes != interval {
+		offMonStat.Since = time.Now().Format("2006-01-02 15:04:05")
+		// 关闭时清空「下载中」痕迹，避免陈旧数据误导。
+		if !enabled {
+			offMonStat.Watching = nil
+		}
+	}
+	offMonStat.Enabled = enabled
+	offMonStat.IntervalMinutes = interval
+	offMonStat.Note = note
+}
+
+// markOfflineMonCheck 记录一轮检查结果（时间 + 当前下载中的目录）。
+func markOfflineMonCheck(watching []string) {
+	offMonMu.Lock()
+	defer offMonMu.Unlock()
+	offMonStat.LastCheckAt = time.Now().Format("2006-01-02 15:04:05")
+	if watching == nil {
+		watching = []string{}
+	}
+	offMonStat.Watching = watching
+}
+
+// markOfflineMonTrigger 记录一次因「离线完成」而触发的扫描。
+func markOfflineMonTrigger() {
+	offMonMu.Lock()
+	defer offMonMu.Unlock()
+	offMonStat.LastTriggerAt = time.Now().Format("2006-01-02 15:04:05")
+	offMonStat.Triggers++
+}
+
+// offlineMonDisabledReason 给出「离线监控未运行」的可读原因。
+func offlineMonDisabledReason(minutes, taskCount int) string {
+	if minutes <= 0 {
+		return "已关闭（间隔设为 0）"
+	}
+	if taskCount == 0 {
+		return "无清理目录（请先在「连接 · 目录 · 规则」中添加目录）"
+	}
+	return "未启用"
+}
+
 // offlineMonitor 常驻监控清理目录的离线下载状态，检测「下载中→完成」翻转即触发一次扫描。
 // 这是「离线任务监控」的核心循环：每个周期对每个清理目录做 1 次 ListOfflineFilesByPath
 // 轻量状态查询（绝不遍历目录文件内容），仅在检测到完成翻转时触发扫描，故不构成「定时扫全树」。
+//
+// 可观测性（本轮新增）：启用/关闭、间隔变化、以及「下载中」目录集合的变化都会写日志；
+// 运行态同步暴露到 /api/state 的 offlineMonitor 字段，页面据此显示「离线监控」当前状态。
 //
 // 周期用 waitOrDone 实现而非 time.Ticker：既满足 QA5 风控红线（生产文件仅 runEventFallbackScanner
 // 允许 time.NewTicker），又语义等价（ctx 取消即热退出，不泄漏 goroutine）。
 func offlineMonitor(ctx context.Context) {
 	prev := map[string]string{} // path -> 上一轮 OfflineStatus.Status
+	var lastSig string         // 上一轮「启用态 + 间隔 + 目录数」签名，仅变化时记日志
+	var lastWatching string    // 上一轮「下载中」目录集合的签名，仅变化时记日志
 	for {
 		c := currentConfig()
 		tasks := cleanTasks(c.Tasks)
 		interval := time.Duration(c.OfflineMonitorMinutes) * time.Minute
 		if len(tasks) == 0 || interval <= 0 {
-			// 无目录 / 关闭监控：清空历史状态，避免「启用后上一次残留的 downloading」误判翻转。
 			prev = map[string]string{}
+			sig := fmt.Sprintf("off|tasks=%d|min=%d", len(tasks), c.OfflineMonitorMinutes)
+			if sig != lastSig {
+				lastSig = sig
+				lastWatching = ""
+				setOfflineMonState(false, c.OfflineMonitorMinutes, offlineMonDisabledReason(c.OfflineMonitorMinutes, len(tasks)))
+				appendLog("离线任务监控：未运行（%s）", offlineMonDisabledReason(c.OfflineMonitorMinutes, len(tasks)))
+			}
 			if !waitOrDone(ctx, 60*time.Second) {
 				return
 			}
 			continue
 		}
-		done := offlineMonitorTick(ctx, c, tasks, prev)
+		sig := fmt.Sprintf("on|tasks=%d|min=%d", len(tasks), c.OfflineMonitorMinutes)
+		if sig != lastSig {
+			lastSig = sig
+			lastWatching = ""
+			setOfflineMonState(true, c.OfflineMonitorMinutes, "运行中")
+			appendLog("离线任务监控已启动：每 %d 分钟检查 %d 个清理目录的离线下载状态（目录：%s）",
+				c.OfflineMonitorMinutes, len(tasks), strings.Join(tasks, "、"))
+		}
+		done, watching := offlineMonitorTick(ctx, c, tasks, prev)
+		markOfflineMonCheck(watching)
+		if w := strings.Join(watching, "、"); w != lastWatching {
+			lastWatching = w
+			if len(watching) > 0 {
+				appendLog("离线任务监控：检测到 %d 个目录正在离线下载（%s），完成后将自动触发扫描", len(watching), w)
+			} else {
+				appendLog("离线任务监控：当前无进行中的离线下载，等待检测目录的离线状态变化")
+			}
+		}
 		if len(done) > 0 {
 			appendLog("离线任务监控：%d 个目录的离线下载已完成，触发扫描（%s）", len(done), strings.Join(done, "、"))
+			markOfflineMonTrigger()
 			// 与事件驱动相同的 panic 兜底：扫描期间的 panic 不拖垮本监控循环。
 			go func() {
 				defer func() {
@@ -1191,30 +1342,35 @@ func offlineMonitor(ctx context.Context) {
 	}
 }
 
-// offlineMonitorTick 查询一轮全部清理目录的离线状态，返回本轮检测到「离线下载完成」的目录路径。
-// CD2 不可达 / 未配置 / 查询超时一律静默降级（返回 nil，本轮不触发、也清空 prev 之外不上抛错误）。
+// offlineMonitorTick 查询一轮全部清理目录的离线状态，返回：
+//   - done：本轮检测到「离线下载完成」（上一轮 downloading、本轮非 downloading）的目录路径；
+//   - watching：本轮处于「下载中」的目录路径（供日志与页面展示「监控确实在盯哪些目录」）。
+//
+// CD2 不可达 / 未配置 / 查询超时一律静默降级（done=nil、watching=nil、不上抛错误）。
 // prev 参数会被本函数原地更新为下一轮对比的基线。
-func offlineMonitorTick(ctx context.Context, c Config, tasks []string, prev map[string]string) []string {
+func offlineMonitorTick(ctx context.Context, c Config, tasks []string, prev map[string]string) (done, watching []string) {
 	client, err := newCD2Client(c)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	defer client.Close()
 	tctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if err := client.TCPCheck(tctx); err != nil {
-		return nil
+		return nil, nil
 	}
-	done := []string{}
 	for _, t := range tasks {
 		st := client.OfflineStatus(tctx, t)
 		old := prev[t]
 		if offlineCompleted(old, st.Status) {
 			done = append(done, t)
 		}
+		if st.Status == "downloading" {
+			watching = append(watching, t)
+		}
 		prev[t] = st.Status
 	}
-	return done
+	return done, watching
 }
 
 // checkCloudEventListeners 查询各云盘的云端事件监听器状态（轻量元数据，不遍历目录），
@@ -1248,8 +1404,13 @@ func checkCloudEventListeners(ctx context.Context, c Config, lastKey string) str
 // （见 pushHasLiveEvidence；注意与「收到任意推送消息」区分——日志广播不算证据）：
 //   - isCloudEventListenerRunning=true：运行中提示；
 //   - false 且 pushLive：说明该标记并不代表推送会停，降级为提示，避免误报（实证场景）；
-//   - false 且 !pushLive：给出可执行的排查建议（该标记仅指云端原生通道；若文件事件断流，
-//     请检查云盘连接/重启 CD2，期间可用「手动清理」兜底）。
+//   - false 且 !pushLive：如实说明「暂未收到该云盘的文件变更事件」，并指明本程序已由
+//     「离线任务监控」与「事件静默兜底扫描」自动接替。
+//
+// 2026-09-18 文案更正：isCloudEventListenerRunning=false 是部分 CD2 版本的常态，
+// 并非可修复的故障——旧文案「请到 CD2 检查该云盘连接/重新登录，或重启 CD2」是误导性的
+// 排查建议（用户实测：该字段对所有云盘恒为 false，重启 CD2 也不改变，且用户明确禁止重启
+// CD2 以免影响其它对接程序）。故此处改为中性「提示」，不再给出无效的排查动作。
 //
 // key 里含 pushLive，故「证据状态翻转」也会重记日志（否则只翻转证据时不会重新记录）。
 func cloudListenerReport(apis []CloudAPI, pushLive bool) (lines []string, key string) {
@@ -1257,17 +1418,17 @@ func cloudListenerReport(apis []CloudAPI, pushLive bool) (lines []string, key st
 	for _, a := range apis {
 		parts = append(parts, fmt.Sprintf("%s=%v", a.Name, a.IsCloudEventListenerRunning))
 		if a.IsCloudEventListenerRunning {
-			lines = append(lines, fmt.Sprintf("CD2 云盘「%s」云端事件监听器运行中（isCloudEventListenerRunning=true）", a.Name))
+			lines = append(lines, fmt.Sprintf("CD2 云盘「%s」云端事件通道已就绪（isCloudEventListenerRunning=true）", a.Name))
 			continue
 		}
 		if pushLive {
 			lines = append(lines, fmt.Sprintf(
-				"提示：CD2 云盘「%s」的云端原生事件监听器未运行（isCloudEventListenerRunning=false）；但本程序已确证仍能收到该云盘的文件变更事件（FILE_SYSTEM_CHANGE，订阅存活），事件驱动清理不受影响，无需处理。",
+				"提示：CD2 云盘「%s」未上报云端事件通道（isCloudEventListenerRunning=false）；但本程序已确证仍能收到该云盘的文件变更事件（FILE_SYSTEM_CHANGE），实时清理不受影响。",
 				a.Name))
 			continue
 		}
 		lines = append(lines, fmt.Sprintf(
-			"警示：CD2 云盘「%s」的云端原生事件监听器未运行（isCloudEventListenerRunning=false），且最近未收到任何文件变更事件（FILE_SYSTEM_CHANGE）——此状态下文件变更可能不会被推送到，事件驱动清理可能失效。请到 CD2 检查该云盘连接/重新登录，或重启 CD2 后在页面点「保存配置」重订阅；本程序将按「事件静默兜底扫描」设置自动兜底（默认每 15 分钟一次，可在页面调整），期间也可用「手动清理」立即处理。",
+			"提示：CD2 云盘「%s」未上报云端事件通道（isCloudEventListenerRunning=false），本程序暂未收到该云盘的文件变更事件。这是部分 CD2 版本的常态、并非故障；实时清理由「离线任务监控」（默认每 1 分钟）与「事件静默兜底扫描」（默认每 15 分钟）自动接替（间隔可在页面调整），也可用「手动清理」立即处理。",
 			a.Name))
 	}
 	parts = append(parts, fmt.Sprintf("pushLive=%v", pushLive))

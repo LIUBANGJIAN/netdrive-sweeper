@@ -17,10 +17,16 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Read app version
+        id: ver
+        run: echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
+
       - name: Build image without cache
         run: |
           docker build --no-cache \
+            --build-arg APP_VERSION=${{ steps.ver.outputs.version }} \
             -t ${{ secrets.DOCKERHUB_USERNAME }}/netdrive-sweeper:${{ github.sha }} \
+            -t ${{ secrets.DOCKERHUB_USERNAME }}/netdrive-sweeper:v${{ steps.ver.outputs.version }} \
             -t ${{ secrets.DOCKERHUB_USERNAME }}/netdrive-sweeper:latest \
             .
 
@@ -32,4 +38,5 @@ jobs:
       - name: Push image
         run: |
           docker push ${{ secrets.DOCKERHUB_USERNAME }}/netdrive-sweeper:${{ github.sha }}
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/netdrive-sweeper:v${{ steps.ver.outputs.version }}
           docker push ${{ secrets.DOCKERHUB_USERNAME }}/netdrive-sweeper:latest
